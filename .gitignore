@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 data_cache.json
 last_good_prices.json
+.workbuddy/
+deploy/
+clean_data.py

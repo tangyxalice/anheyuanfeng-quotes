@@ -77,3 +77,46 @@
 - 想让云端 **每天都爬**（不止周二~周五）：把 `app.py` 第 434 行 `weekday in (1, 2, 3, 4)` 改为 `weekday in range(7)`，重新部署即可。
 - 想更频繁更新：UptimeRobot 的 URL 指向 `/api/refresh`（间隔建议 ≥10 分钟，避免触发生意社反爬）。
 - 注：云端磁盘为临时盘，每次重启会清空 `last_good_prices.json`，但进程启动即重新爬取，无影响。
+
+## 九、零基础：从注册账号到上线（逐步指南）
+假设你**还没有 GitHub / Render 账号**，从零带你拿到常驻实时网址。标「你做」的步骤需本人操作（涉及邮箱/手机验证码，AI 不能代注册/登录）。
+
+### 第 1 步：注册 GitHub（你做，约 2 分钟）
+1. 打开 https://github.com/signup
+2. 填邮箱、设密码、起用户名 → 完成人机验证。
+3. 登录邮箱点验证链接，完成注册。
+
+### 第 2 步：建一个空仓库（你做）
+1. 登录 GitHub → 右上角「+」→ New repository。
+2. Repository name 填 `anheyuanfeng-quotes`（随意），**不要**勾 "Initialize with README"，其余默认。
+3. 点 Create repository，复制页面上的仓库 URL（形如 `https://github.com/你的用户名/anheyuanfeng-quotes.git`）。
+
+### 第 3 步：把代码推上去（二选一）
+**方式甲：命令行（你本机打开 PowerShell 或 Git Bash，进入项目目录）**
+```bash
+cd C:\Users\tangYX\WorkBuddy\2026-07-23-20-37-14
+git branch -M main
+git remote add origin <第2步复制的URL>      # 若报 already exists，改运行：git remote set-url origin <URL>
+git push -u origin main
+```
+首次 push 会要求登录 GitHub：弹窗登录，或密码处粘贴 **Personal Access Token**（生成：GitHub → 右上角头像 → Settings → Developer settings → Personal access tokens → Generate new token (classic)，勾 `repo` 权限，生成后复制，**只显示一次**）。
+
+**方式乙：GitHub Desktop（不想用命令行）**
+1. 下载安装 https://desktop.github.com/ 并登录 GitHub。
+2. File → Add Local Repository → 选 `C:\Users\tangYX\WorkBuddy\2026-07-23-20-37-14` → Publish repository（已含 .git，直接发布）。
+3. 点 Publish 即可，无需命令行。
+
+### 第 4 步：注册 Render（你做，约 2 分钟）
+1. 打开 https://render.com → Sign Up → **用 GitHub 登录**（最方便，自动授权连仓库）。
+2. 完成邮箱验证。
+
+### 第 5 步：在 Render 部署（你做）
+1. Dashboard → New → Web Service → 连接第 2 步的 GitHub 仓库。
+2. 设置基本自动识别 `render.yaml`：Name `anheyuanfeng-quotes`、Runtime Python 3、Plan Free、Build `pip install -r requirements.txt`、Start `gunicorn -w 1 -b 0.0.0.0:$PORT app:app`。
+3. 点 Create Web Service，等 1–2 分钟变绿色 ✅，得到网址（形如 `https://anheyuanfeng-quotes.onrender.com`）。
+
+### 第 6 步：防休眠保活（你做）
+UptimeRobot 每 5 分钟 ping 你的网址 `/`（详见第八节），保活后云端持续按"周二~周五每小时"爬取。
+
+### 完成
+任意设备浏览器打开网址即实时看板；手动刷新用 `/api/refresh`（任意时间）。如需云端**每天都爬**，把 `app.py` 第 434 行 `weekday in (1, 2, 3, 4)` 改为 `weekday in range(7)` 重新部署。
