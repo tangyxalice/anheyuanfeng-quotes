@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+data_cache.json
+last_good_prices.json

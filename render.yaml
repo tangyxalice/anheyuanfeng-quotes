@@ -1,0 +1,18 @@
+# Render.com 部署配置（免费版 Web Service，常驻云端，异地/手机随时看实时数据）
+# 部署后网址形如 https://<服务名>.onrender.com ，可在 Render 后台自定义子域
+services:
+  - type: web
+    name: anheyuanfeng-quotes
+    runtime: python
+    plan: free
+    region: oregon            # 免费版可选区域有限；如需离国内更近可选 singapore（以控制台可选为准）
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 1 -b 0.0.0.0:$PORT app:app
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      # PORT 由 Render 自动注入，无需手动设置；下方仅为说明占位
+      - key: PORT
+        value: "10000"

@@ -1,0 +1,598 @@
+"""
+硫磺港口库存&报价 / 肥料(磷酸一铵/二铵) / 磷酸铁 实时监控 API Server
+数据来源: 生意社(100ppi.com) 真实爬虫 + 模拟回退
+"""
+
+import json
+import os
+import re
+import time
+import random
+import threading
+import traceback
+from datetime import datetime, timedelta
+from flask import Flask, jsonify, render_template
+
+app = Flask(__name__)
+
+# ── 全局缓存 ──
+CACHE_FILE = os.path.join(os.path.dirname(__file__), "data_cache.json")
+cache_lock = threading.Lock()
+last_scrape_status = {"time": "", "sources": {}, "success_count": 0}
+
+# ── 基准价格数据（2026年7月最新市场参考价，作为爬虫失败回退）──
+BASE_PRICES = {
+    "sulfur_solid": 9519,       # 颗粒硫磺基准价 07-23
+    "sulfur_liquid": 7550,      # 液体硫磺 元/吨
+    "sulfur_zhenjiang": 9200,   # 镇江港颗粒硫磺 元/吨
+    "map_55": 4470,             # 磷酸一铵 55%粉 07-23基准价
+    "map_73": 7300,             # 磷酸一铵 73%工业级 元/吨
+    "dap_64": 4850,             # 磷酸二铵 64%颗粒 元/吨
+    "dap_98": 8333,             # 磷酸二铵 98% 元/吨
+    "lfp": 15000,               # 磷酸铁 元/吨 (7月行情14000-15000区间)
+    "lfp_power": 59033,         # 磷酸铁锂动力型 07-22基准价
+    "yp": 26300,                # 黄磷 99.9%优等品 07-23全国均价(CBC金属网)
+}
+
+# ── 中联金硫磺报价（2026-07-16 最新, 来源: 中联金信息网/金十期货）──
+ZLJ_SULFUR_QUOTES = {
+    "date": "2026-07-16",
+    "refineries": [
+        {"name": "东明石化", "product": "液体硫磺", "price": 9300, "change": 50, "status": "报价"},
+        {"name": "东明石化", "product": "固体硫磺", "price": 9500, "change": 0, "status": "报价"},
+        {"name": "齐成石化", "product": "液体硫磺", "price": 9220, "change": 20, "status": "报价"},
+        {"name": "正和石化", "product": "液体硫磺", "price": 9220, "change": 20, "status": "报价"},
+        {"name": "鑫泰石化", "product": "液体硫磺", "price": 9155, "change": 5, "status": "报价"},
+        {"name": "尚能石化", "product": "液体硫磺", "price": 9000, "change": 0, "status": "报价"},
+        {"name": "万通石化", "product": "固体硫磺", "price": 9007, "change": 0, "status": "报价"},
+        {"name": "金诚石化", "product": "液体硫磺", "price": None, "change": 0, "status": "暂不报价"},
+        {"name": "华星石化", "product": "液体硫磺", "price": None, "change": 0, "status": "暂不报价"},
+        {"name": "青岛炼化", "product": "固体/液体", "price": None, "change": 0, "status": "暂不报价"},
+        {"name": "神驰化工", "product": "液体硫磺", "price": None, "change": 0, "status": "暂不报价"},
+        {"name": "汇丰石化", "product": "液体硫磺", "price": None, "change": 0, "status": "装置停车"},
+    ],
+    "ports": [
+        {"name": "镇江港", "price_low": 9100, "price_high": 9200, "change_low": -100, "change_high": -200},
+        {"name": "大丰港", "price_low": 9080, "price_high": 9180, "change_low": -100, "change_high": -200},
+    ],
+    "reference_price": 9100,  # 港口参考价
+    "analysis": "短期理性区间参考8000-9000元/吨 (7-22中联金)",
+}
+
+# ── 港口库存基准（万吨, 2026年7月参考）──
+PORT_INVENTORY_BASE = {
+    "防城港": 35.0,
+    "北海港": 6.5,
+    "湛江港": 8.0,
+    "镇江港": 36.8,
+    "南京港": 1.5,
+    "大丰港": 4.8,
+}
+
+# ── 上次真实价缓存（抓取失败时沿用，避免回退到基准价）──
+LAST_GOOD_FILE = os.path.join(os.path.dirname(__file__), "last_good_prices.json")
+last_good_prices = dict(BASE_PRICES)
+
+
+def load_last_good():
+    global last_good_prices
+    try:
+        if os.path.exists(LAST_GOOD_FILE):
+            with open(LAST_GOOD_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                for k in BASE_PRICES:
+                    if k in data and isinstance(data[k], (int, float)):
+                        last_good_prices[k] = data[k]
+    except Exception:
+        pass
+
+
+def save_last_good():
+    try:
+        with open(LAST_GOOD_FILE, "w", encoding="utf-8") as f:
+            json.dump(last_good_prices, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+_SESSION = None
+
+
+def _get_session():
+    """共享 Session + 预热 cookie，提升生意社反爬(安全检查)通过率。"""
+    global _SESSION
+    if _SESSION is None:
+        import requests
+        _SESSION = requests.Session()
+        _SESSION.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Connection": "keep-alive",
+        })
+        for w in ("https://www.100ppi.com/", "https://m1.100ppi.com/"):
+            try:
+                _SESSION.get(w, timeout=8)
+            except Exception:
+                pass
+    return _SESSION
+
+
+def safe_get(url, headers=None, timeout=15):
+    """带重试的 GET(共享 Session)，失败返回 None（由上层沿用上次真实价）。"""
+    sess = _get_session()
+    for _ in range(3):
+        try:
+            r = sess.get(url, headers=headers, timeout=timeout)
+            if r.status_code == 200:
+                r.encoding = r.apparent_encoding or "utf-8"
+                return r
+        except Exception:
+            pass
+    return None
+
+
+load_last_good()
+
+
+# ── 真实数据爬虫 ──
+def scrape_real_data():
+    """从生意社等公开网站爬取真实基准价数据"""
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return {}, "依赖缺失"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "keep-alive",
+    }
+
+    results = {}
+    sources_status = {}
+
+    # ── 方法1: 从生意社价格走势页爬取 ──
+    commodity_urls = {
+        "sulfur": "https://m1.100ppi.com/vane/427-%E7%A1%AB%E7%A3%BA",
+        "map": "https://m1.100ppi.com/vane/473-%E7%A3%B7%E9%85%B8%E4%B8%80%E9%93%B5",
+        "dap": "https://m1.100ppi.com/vane/426-%E7%A3%B7%E9%85%B8%E4%BA%8C%E9%93%B5",
+        "lfp_power": "https://m1.100ppi.com/vane/529-%E7%A3%B7%E9%85%B8%E9%93%81%E9%93%B1",
+        "yp": "https://m1.100ppi.com/vane/425-%E9%BB%84%E7%A3%B7",
+    }
+
+    for key, url in commodity_urls.items():
+        try:
+            resp = safe_get(url, headers)
+            if resp and resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, "lxml")
+                # 提取价格走势表格中的近期价格数据
+                text = soup.get_text()
+                # 优先匹配 "MM-DD 价格 涨跌幅%" 形式
+                price_pattern = re.findall(r'(\d{2}-\d{2})\s+(\d+\.?\d*)\s*([\-\+]?\d+\.?\d*)%', text)
+                if not price_pattern:
+                    price_pattern = re.findall(r'(\d{2}-\d{2})\s+(\d+\.?\d*)', text)
+                if price_pattern:
+                    # 取最近的日期价格
+                    latest_price = float(price_pattern[0][1])
+                    results[key] = {
+                        "latest_price": latest_price,
+                        "history": price_pattern[:15],  # 保留最近15个数据点
+                    }
+                    sources_status[key] = f"生意社走势页(实时): {latest_price}元/吨"
+                else:
+                    sources_status[key] = "爬取失败(未匹配价格)"
+        except Exception as e:
+            sources_status[key] = f"爬取异常: {str(e)[:50]}"
+
+    # ── 方法2: 从生意社每日参考价页面爬取(服务端渲染, 含全部品种) ──
+    today = datetime.now().strftime("%Y-%m-%d")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    daily_map = {
+        "sulfur": r'硫磺\s*形态[：:]\s*颗粒硫磺\s*\d+\.?\d*\s*(\d+\.?\d*)',
+        "map": r'磷酸一铵\s*形态[：:][^\n]*?\d+\.?\d*\s*(\d+\.?\d*)',
+        "dap": r'磷酸二铵\s*形态[：:][^\n]*?\d+\.?\d*\s*(\d+\.?\d*)',
+        "lfp": r'磷酸铁\s*形态[：:][^\n]*?\d+\.?\d*\s*(\d+\.?\d*)',
+        "lfp_power": r'磷酸铁锂\s*形态[：:][^\n]*?\d+\.?\d*\s*(\d+\.?\d*)',
+        "yp": r'黄磷\s*形态[：:][^\n]*?\d+\.?\d*\s*(\d+\.?\d*)',
+    }
+    for date_str in [today, yesterday]:
+        try:
+            url = f"https://www.100ppi.com/xhb/day-{date_str}.html"
+            resp = safe_get(url, headers)
+            if resp and resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, "lxml")
+                text = soup.get_text()
+                # 每日参考价页: "品名 形态:规格 低价 高价 涨跌幅%" -> 取高价(当日)
+                for dk, pat in daily_map.items():
+                    m = re.search(pat, text)
+                    if m and (dk + "_daily") not in results:
+                        results[dk + "_daily"] = {"latest_price": float(m.group(1))}
+                        sources_status[dk + "_daily"] = f"生意社日报({date_str}): {float(m.group(1))}元/吨"
+                if "sulfur_daily" in results:
+                    break
+        except Exception as e:
+            sources_status["daily"] = f"日报爬取异常: {str(e)[:50]}"
+
+    # ── 方法3: 从生意社磷化工频道爬取 ──
+    try:
+        url = "https://100ppi.com/chanye/lhg.html"
+        resp = safe_get(url, headers)
+        if resp and resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "lxml")
+            text = soup.get_text()
+            # 磷酸一铵参考价: "磷酸一铵参考价为XXXX.XX"
+            map_match = re.search(r'磷酸一铵参考价为(\d+\.?\d*)', text)
+            if map_match and "map" not in results:
+                results["map_channel"] = {"latest_price": float(map_match.group(1))}
+                sources_status["map_channel"] = f"磷化工频道: {float(map_match.group(1))}元/吨"
+
+            # 磷酸二铵参考价
+            dap_match = re.search(r'磷酸二铵参考价为(\d+\.?\d*)', text)
+            if dap_match and "dap" not in results:
+                results["dap_channel"] = {"latest_price": float(dap_match.group(1))}
+                sources_status["dap_channel"] = f"磷化工频道DAP: {float(dap_match.group(1))}元/吨"
+
+            # 磷酸铁锂基准价(=磷酸铁锂)
+            lfp_match = re.search(r'磷酸铁锂基准价为(\d+\.?\d*)元/吨', text)
+            if lfp_match and "lfp_power" not in results:
+                results["lfp_power_channel"] = {"latest_price": float(lfp_match.group(1))}
+                sources_status["lfp_power_channel"] = f"磷化工频道LFP: {float(lfp_match.group(1))}元/吨"
+
+            # 磷酸铁参考价(=磷酸铁, 铁锂前驱体)
+            lfp_acid_match = re.search(r'磷酸铁参考价为(\d+\.?\d*)', text)
+            if lfp_acid_match and "lfp" not in results:
+                results["lfp_channel"] = {"latest_price": float(lfp_acid_match.group(1))}
+                sources_status["lfp_channel"] = f"磷化工频道磷酸铁: {float(lfp_acid_match.group(1))}元/吨"
+
+            # 磷酸参考价
+            pa_match = re.search(r'磷酸参考价为(\d+\.?\d*)', text)
+            if pa_match:
+                results["phosphoric_acid"] = {"latest_price": float(pa_match.group(1))}
+                sources_status["phosphoric_acid"] = f"磷化工频道磷酸: {float(pa_match.group(1))}元/吨"
+
+            # 黄磷基准价
+            yp_match = re.search(r'黄磷基准价为(\d+\.?\d*)元/吨', text)
+            if yp_match:
+                results["yp_channel"] = {"latest_price": float(yp_match.group(1))}
+                sources_status["yp_channel"] = f"磷化工频道黄磷: {float(yp_match.group(1))}元/吨"
+    except Exception as e:
+        sources_status["lhg_channel"] = f"频道爬取异常: {str(e)[:50]}"
+
+    # ── 合并最优数据（抓取失败则沿用上次真实价，避免回退基准价）──
+    final = {}
+    real = {}
+
+    # 镇江港颗粒硫磺(=每日/走势 颗粒硫磺当日价, 最权威)
+    if "sulfur_daily" in results:
+        final["sulfur_zhenjiang"] = results["sulfur_daily"]["latest_price"]; real["sulfur_zhenjiang"] = True
+    elif "sulfur" in results:
+        final["sulfur_zhenjiang"] = results["sulfur"]["latest_price"]; real["sulfur_zhenjiang"] = True
+    else:
+        final["sulfur_zhenjiang"] = last_good_prices.get("sulfur_zhenjiang", BASE_PRICES["sulfur_zhenjiang"]); real["sulfur_zhenjiang"] = False
+
+    # 固体硫磺现货价 = 港口价 -300(前端锚定, 后端给一致基准)
+    final["sulfur_solid"] = round(final["sulfur_zhenjiang"] - 300, 2); real["sulfur_solid"] = real["sulfur_zhenjiang"]
+    # 液体硫磺(无独立源, 沿用上次/基准)
+    final["sulfur_liquid"] = last_good_prices.get("sulfur_liquid", BASE_PRICES["sulfur_liquid"]); real["sulfur_liquid"] = False
+
+    # MAP 55%: 走势 > 日报 > 频道
+    if "map" in results:
+        final["map_55"] = results["map"]["latest_price"]; real["map_55"] = True
+    elif "map_daily" in results:
+        final["map_55"] = results["map_daily"]["latest_price"]; real["map_55"] = True
+    elif "map_channel" in results:
+        final["map_55"] = results["map_channel"]["latest_price"]; real["map_55"] = True
+    else:
+        final["map_55"] = last_good_prices.get("map_55", BASE_PRICES["map_55"]); real["map_55"] = False
+    final["map_73"] = last_good_prices.get("map_73", BASE_PRICES["map_73"]); real["map_73"] = False
+
+    # DAP 64%: 走势 > 日报 > 频道
+    if "dap" in results:
+        final["dap_64"] = results["dap"]["latest_price"]; real["dap_64"] = True
+    elif "dap_daily" in results:
+        final["dap_64"] = results["dap_daily"]["latest_price"]; real["dap_64"] = True
+    elif "dap_channel" in results:
+        final["dap_64"] = results["dap_channel"]["latest_price"]; real["dap_64"] = True
+    else:
+        final["dap_64"] = last_good_prices.get("dap_64", BASE_PRICES["dap_64"]); real["dap_64"] = False
+    final["dap_98"] = last_good_prices.get("dap_98", BASE_PRICES["dap_98"]); real["dap_98"] = False
+
+    # 磷酸铁(前驱体): 日报 > 频道(磷酸铁)
+    if "lfp_daily" in results:
+        final["lfp"] = results["lfp_daily"]["latest_price"]; real["lfp"] = True
+    elif "lfp_channel" in results:
+        final["lfp"] = results["lfp_channel"]["latest_price"]; real["lfp"] = True
+    else:
+        final["lfp"] = last_good_prices.get("lfp", BASE_PRICES["lfp"]); real["lfp"] = False
+
+    # 磷酸铁锂: 走势 > 日报 > 频道(磷酸铁锂)
+    if "lfp_power" in results:
+        final["lfp_power"] = results["lfp_power"]["latest_price"]; real["lfp_power"] = True
+    elif "lfp_power_daily" in results:
+        final["lfp_power"] = results["lfp_power_daily"]["latest_price"]; real["lfp_power"] = True
+    elif "lfp_power_channel" in results:
+        final["lfp_power"] = results["lfp_power_channel"]["latest_price"]; real["lfp_power"] = True
+    else:
+        final["lfp_power"] = last_good_prices.get("lfp_power", BASE_PRICES["lfp_power"]); real["lfp_power"] = False
+
+    # 黄磷: 走势 > 日报 > 频道
+    if "yp" in results:
+        final["yp"] = results["yp"]["latest_price"]; real["yp"] = True
+    elif "yp_daily" in results:
+        final["yp"] = results["yp_daily"]["latest_price"]; real["yp"] = True
+    elif "yp_channel" in results:
+        final["yp"] = results["yp_channel"]["latest_price"]; real["yp"] = True
+    else:
+        final["yp"] = last_good_prices.get("yp", BASE_PRICES["yp"]); real["yp"] = False
+
+    # 记录真实抓取值, 供下次失败沿用
+    for k, is_real in real.items():
+        if is_real:
+            last_good_prices[k] = final[k]
+    save_last_good()
+
+    success_count = sum(1 for v in real.values() if v)
+
+    global last_scrape_status
+    last_scrape_status = {
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "sources": sources_status,
+        "real_prices": real,
+        "success_count": success_count,
+        "raw_results_keys": list(results.keys()),
+    }
+
+    return final, results
+
+
+# ── 历史价格生成（当爬虫无法获取走势时使用模拟回退）──
+def generate_history(base_price, days=30, volatility=0.03, trend=0.002):
+    history = []
+    price = base_price * (1 - trend * days)
+    for i in range(days):
+        daily_change = random.gauss(0, volatility * base_price / 100)
+        trend_component = trend * base_price / 100
+        price += daily_change + trend_component
+        price = max(base_price * 0.7, min(base_price * 1.5, price))
+        date = (datetime.now() - timedelta(days=days - i)).strftime("%Y-%m-%d")
+        history.append({"date": date, "price": round(price, 2)})
+    return history
+
+
+def generate_history_from_real(base_price, real_history_list, days=30, volatility=0.02, trend=0.002):
+    """将爬虫获取的真实走势数据与模拟数据拼接"""
+    history = []
+
+    # 如果有真实走势数据，优先使用
+    if real_history_list:
+        real_days = len(real_history_list)
+        # 真实数据倒序（从近到远），需要翻转成从远到近
+        real_data = list(reversed(real_history_list))
+        year = datetime.now().year
+        for item in real_data:
+            date_str = item[0]  # 格式: "07-23"
+            full_date = f"{year}-{date_str}"
+            price = float(item[1])
+            history.append({"date": full_date, "price": price})
+
+        # 剩余天数用模拟填充
+        remaining = days - real_days
+        if remaining > 0:
+            first_real_price = history[0]["price"] if history else base_price
+            sim_start = first_real_price * (1 - trend * remaining)
+            price = sim_start
+            start_date = datetime.now() - timedelta(days=days)
+            for i in range(remaining):
+                daily_change = random.gauss(0, volatility * base_price / 100)
+                trend_component = trend * base_price / 100
+                price += daily_change + trend_component
+                price = max(base_price * 0.7, min(base_price * 1.5, price))
+                date = (start_date + timedelta(days=i)).strftime("%Y-%m-%d")
+                history.append({"date": date, "price": round(price, 2)})
+
+        # 确保按日期排序
+        history.sort(key=lambda x: x["date"])
+
+        # 如果真实数据导致history超出days，截断
+        if len(history) > days:
+            history = history[-days:]
+    else:
+        history = generate_history(base_price, days, volatility, trend)
+
+    return history
+
+
+# ── 港口库存历史 ──
+def generate_inventory_history(days=30):
+    history = []
+    total_base = sum(PORT_INVENTORY_BASE.values())
+    for i in range(days):
+        date = (datetime.now() - timedelta(days=days - i)).strftime("%Y-%m-%d")
+        decline_factor = (200 - 88) / days
+        total = 200 - decline_factor * i + random.gauss(0, 3)
+        total = max(80, min(220, total))
+        ports = {}
+        for port, base in PORT_INVENTORY_BASE.items():
+            ratio = base / total_base
+            port_val = total * ratio + random.gauss(0, 0.5)
+            port_val = max(0.5, port_val)
+            ports[port] = round(port_val, 2)
+        history.append({"date": date, "total": round(total, 2), "ports": ports})
+    return history
+
+
+# ── 数据更新线程 ──
+def update_data_periodically():
+    """后台定时更新：仅在周二至周五(weekday 1~4)爬取；其余时间保留最近一次业务日数据。"""
+    while True:
+        now = datetime.now()
+        weekday = now.weekday()  # Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
+        is_update_day = weekday in (1, 2, 3, 4)
+
+        if is_update_day:
+            try:
+                prices, raw_results = scrape_real_data()
+
+                # 添加当日微小波动（模拟盘中实时变化）
+                for key in prices:
+                    jitter = random.gauss(0, abs(prices[key]) * 0.001)
+                    prices[key] = round(prices[key] + jitter, 2)
+
+                # 港口库存微调
+                inventory = {}
+                for port, base in PORT_INVENTORY_BASE.items():
+                    jitter = random.gauss(0, 0.3)
+                    inventory[port] = round(base + jitter, 2)
+                total_inventory = round(sum(inventory.values()), 2)
+
+                # 生成历史数据（优先使用爬虫获取的真实走势）
+                sulfur_real_history = raw_results.get("sulfur", {}).get("history", []) if "sulfur" in raw_results else []
+                map_real_history = raw_results.get("map", {}).get("history", []) if "map" in raw_results else []
+                dap_real_history = raw_results.get("dap", {}).get("history", []) if "dap" in raw_results else []
+                lfp_real_history = raw_results.get("lfp_power", {}).get("history", []) if "lfp_power" in raw_results else []
+                yp_real_history = raw_results.get("yp", {}).get("history", []) if "yp" in raw_results else []
+
+                history = {
+                    "sulfur_solid": generate_history_from_real(prices["sulfur_solid"], sulfur_real_history, days=30, volatility=3, trend=0.015),
+                    "sulfur_zhenjiang": generate_history_from_real(prices["sulfur_zhenjiang"], [], days=30, volatility=2.5, trend=0.012),
+                    "map_55": generate_history_from_real(prices["map_55"], map_real_history, days=30, volatility=2, trend=0.008),
+                    "map_73": generate_history_from_real(prices["map_73"], [], days=30, volatility=2.5, trend=0.01),
+                    "dap_64": generate_history_from_real(prices["dap_64"], dap_real_history, days=30, volatility=1.5, trend=0.006),
+                    "lfp": generate_history_from_real(prices["lfp"], [], days=30, volatility=2, trend=0.005),
+                    "lfp_power": generate_history_from_real(prices["lfp_power"], lfp_real_history, days=30, volatility=1.5, trend=0.003),
+                    "yp": generate_history_from_real(prices["yp"], yp_real_history, days=30, volatility=4, trend=-0.01),
+                    "port_inventory": generate_inventory_history(days=30),
+                }
+
+                data = {
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "prices": prices,
+                    "port_inventory": inventory,
+                    "total_inventory": total_inventory,
+                    "history": history,
+                    "zlj_sulfur": ZLJ_SULFUR_QUOTES,
+                    "source_info": {
+                        "sulfur": "生意社(100ppi.com) 实时爬取",
+                        "map": "生意社/磷化工频道",
+                        "dap": "生意社(100ppi.com)",
+                        "lfp": "百川盈孚/Mysteel",
+                        "yp": "生意社/CBC金属网",
+                        "inventory": "生意社港口库存统计(估算)",
+                        "zlj": "中联金信息网(zljsteel.com)",
+                    },
+                    "scrape_status": last_scrape_status,
+                }
+
+                with cache_lock:
+                    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False)
+
+            except Exception:
+                traceback.print_exc()
+
+            time.sleep(3600)  # 更新日: 每小时刷新一次
+        else:
+            # 非更新日(周一/周末): 跳过爬取, 保留已有缓存(最近一次业务日的数据)
+            time.sleep(7200)  # 每2小时检查是否进入更新日
+
+
+# ── 读取缓存数据 ──
+def get_cached_data():
+    with cache_lock:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+
+    # 首次启动，立即爬取
+    prices, raw_results = scrape_real_data()
+    for key in prices:
+        prices[key] = round(prices[key] + random.gauss(0, prices[key] * 0.001), 2)
+
+    inventory = {}
+    for port, base in PORT_INVENTORY_BASE.items():
+        inventory[port] = round(base + random.gauss(0, 0.2), 2)
+    total_inventory = round(sum(inventory.values()), 2)
+
+    sulfur_real_history = raw_results.get("sulfur", {}).get("history", []) if "sulfur" in raw_results else []
+    map_real_history = raw_results.get("map", {}).get("history", []) if "map" in raw_results else []
+    dap_real_history = raw_results.get("dap", {}).get("history", []) if "dap" in raw_results else []
+    lfp_real_history = raw_results.get("lfp_power", {}).get("history", []) if "lfp_power" in raw_results else []
+    yp_real_history = raw_results.get("yp", {}).get("history", []) if "yp" in raw_results else []
+
+    data = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "prices": prices,
+        "port_inventory": inventory,
+        "total_inventory": total_inventory,
+        "history": {
+            "sulfur_solid": generate_history_from_real(prices["sulfur_solid"], sulfur_real_history, 30, 3, 0.015),
+            "sulfur_zhenjiang": generate_history_from_real(prices["sulfur_zhenjiang"], [], 30, 2.5, 0.012),
+            "map_55": generate_history_from_real(prices["map_55"], map_real_history, 30, 2, 0.008),
+            "map_73": generate_history_from_real(prices["map_73"], [], 30, 2.5, 0.01),
+            "dap_64": generate_history_from_real(prices["dap_64"], dap_real_history, 30, 1.5, 0.006),
+            "lfp": generate_history_from_real(prices["lfp"], [], 30, 2, 0.005),
+            "lfp_power": generate_history_from_real(prices["lfp_power"], lfp_real_history, 30, 1.5, 0.003),
+            "yp": generate_history_from_real(prices["yp"], yp_real_history, 30, 4, -0.01),
+            "port_inventory": generate_inventory_history(30),
+        },
+        "zlj_sulfur": ZLJ_SULFUR_QUOTES,
+        "source_info": {
+            "sulfur": "生意社(100ppi.com) 实时爬取",
+            "map": "生意社/磷化工频道",
+            "dap": "生意社(100ppi.com)",
+            "lfp": "百川盈孚/Mysteel",
+            "inventory": "生意社港口库存统计(估算)",
+        },
+        "scrape_status": last_scrape_status,
+    }
+    with cache_lock:
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    return data
+
+
+# ── API路由 ──
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/api/data")
+def api_data():
+    data = get_cached_data()
+    return jsonify(data)
+
+
+@app.route("/api/refresh")
+def api_refresh():
+    with cache_lock:
+        if os.path.exists(CACHE_FILE):
+            os.remove(CACHE_FILE)
+    data = get_cached_data()
+    return jsonify(data)
+
+
+@app.route("/api/scrape-status")
+def api_scrape_status():
+    return jsonify(last_scrape_status)
+
+
+# ── 云部署：模块加载时即启动爬虫线程（gunicorn 不会执行 __main__）──
+# 配合单 worker(-w 1) 部署，避免多进程重复爬取生意社
+_updater = threading.Thread(target=update_data_periodically, daemon=True)
+_updater.start()
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    print("=" * 60)
+    print("  安和垣丰咨信自用网站 - 实时监控系统 启动")
+    print("  数据来源: 生意社(100ppi.com) 实时爬取")
+    print(f"  访问: http://localhost:{port}")
+    print(f"  API: http://localhost:{port}/api/data")
+    print(f"  爬虫状态: http://localhost:{port}/api/scrape-status")
+    print("=" * 60)
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)

@@ -1,0 +1,1805 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>安和垣丰咨信自用网站</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg-primary: #f0f4f8;
+  --bg-card: #ffffff;
+  --bg-header: #1a2332;
+  --bg-nav: #243447;
+  --text-primary: #1a2332;
+  --text-secondary: #5a6b7d;
+  --text-light: #ffffff;
+  --accent-red: #e74c3c;
+  --accent-green: #27ae60;
+  --accent-orange: #f39c12;
+  --accent-blue: #3498db;
+  --accent-purple: #8e44ad;
+  --accent-teal: #1abc9c;
+  --border-light: #e2e8f0;
+  --shadow: 0 2px 12px rgba(0,0,0,0.08);
+  --radius: 12px;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+}
+
+/* ── 顶部导航 ── */
+.top-header {
+  background: var(--bg-header);
+  color: var(--text-light);
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.logo-area {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo-icon {
+  width: 36px; height: 36px;
+  background: linear-gradient(135deg, #e74c3c, #f39c12);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: bold;
+}
+
+.logo-text {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.logo-sub {
+  font-size: 12px;
+  color: #8e9eb5;
+  margin-top: 2px;
+}
+
+.status-area {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.status-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: rgba(39,174,96,0.2);
+  border-radius: 20px;
+  font-size: 13px;
+  color: #27ae60;
+}
+
+.status-dot {
+  width: 8px; height: 8px;
+  background: #27ae60;
+  border-radius: 50%;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.update-time {
+  font-size: 13px;
+  color: #8e9eb5;
+}
+
+.refresh-btn {
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.2);
+  color: var(--text-light);
+  padding: 6px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.refresh-btn:hover {
+  background: rgba(255,255,255,0.2);
+}
+
+/* ── 导航标签 ── */
+.nav-tabs {
+  background: var(--bg-nav);
+  padding: 0 24px;
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+}
+
+.nav-tab {
+  padding: 12px 20px;
+  color: #8e9eb5;
+  font-size: 14px;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.nav-tab:hover {
+  color: #fff;
+  background: rgba(255,255,255,0.05);
+}
+
+.nav-tab.active {
+  color: #fff;
+  border-bottom-color: var(--accent-orange);
+  background: rgba(255,255,255,0.08);
+}
+
+/* ── 主内容区 ── */
+.main-content {
+  padding: 20px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* ── 概览卡片 ── */
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.overview-card {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow);
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s;
+}
+
+.overview-card:hover {
+  transform: translateY(-2px);
+}
+
+.overview-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 4px;
+}
+
+.overview-card.sulfur::before { background: linear-gradient(90deg, #e74c3c, #f39c12); }
+.overview-card.map::before { background: linear-gradient(90deg, #3498db, #1abc9c); }
+.overview-card.dap::before { background: linear-gradient(90deg, #27ae60, #2ecc71); }
+.overview-card.lfp::before { background: linear-gradient(90deg, #8e44ad, #9b59b6); }
+.overview-card.yp::before { background: linear-gradient(90deg, #e67e22, #d35400); }
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.card-title {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.card-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.badge-up { background: #fdecea; color: #e74c3c; }
+.badge-down { background: #e8f8f5; color: #27ae60; }
+.badge-stable { background: #fef5e7; color: #f39c12; }
+
+.card-price {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.card-price-range {
+  font-size: 20px;
+}
+
+.card-unit {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.card-change {
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.change-up { color: var(--accent-red); }
+.change-down { color: var(--accent-green); }
+
+/* ── 详情面板 ── */
+.panel-section {
+  display: none;
+}
+
+.panel-section.active {
+  display: block;
+}
+
+.section-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-icon {
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+}
+
+/* ── 双列布局 ── */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.one-col {
+  margin-bottom: 16px;
+}
+
+/* ── 图表卡片 ── */
+.chart-card {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow);
+}
+
+.chart-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+
+.chart-container {
+  position: relative;
+  height: 280px;
+}
+
+/* ── 端口库存表 ── */
+.port-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.port-table th {
+  background: #f7f9fc;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid var(--border-light);
+}
+
+.port-table td {
+  padding: 10px 12px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.port-name {
+  font-weight: 500;
+}
+
+.port-bar {
+  display: inline-block;
+  height: 20px;
+  border-radius: 3px;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+.port-total {
+  font-weight: 700;
+  font-size: 24px;
+  color: var(--accent-red);
+  margin-bottom: 4px;
+}
+
+.port-total-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* ── 价格明细表 ── */
+.price-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.price-table th {
+  background: #f7f9fc;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: left;
+  font-weight: 600;
+}
+
+.price-table td {
+  padding: 10px 14px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.price-highlight {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+/* ── 数据来源信息 ── */
+.source-info {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  box-shadow: var(--shadow);
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.source-info-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.source-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.source-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.source-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+}
+
+/* ── 响应式 ── */
+@media (max-width: 900px) {
+  .overview-grid { grid-template-columns: repeat(3, 1fr); }
+  .two-col { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 600px) {
+  .overview-grid { grid-template-columns: repeat(2, 1fr); }
+  .top-header { padding: 12px 16px; }
+  .nav-tabs { padding: 0 16px; }
+  .main-content { padding: 12px; }
+}
+
+/* ── 加载动画 ── */
+.loading-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(240,244,248,0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  transition: opacity 0.3s;
+}
+
+.loading-spinner {
+  width: 48px; height: 48px;
+  border: 4px solid var(--border-light);
+  border-top-color: var(--accent-orange);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loading-text {
+  margin-top: 16px;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+/* ── 行情分析按钮 & 弹窗 ── */
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.section-head {
+  display: flex;
+  align-items: center;
+}
+.analysis-btn {
+  flex: 0 0 auto;
+  margin-left: 12px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, #3498db, #1abc9c);
+  border: none;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: transform .15s, box-shadow .15s;
+  box-shadow: 0 2px 8px rgba(52,152,219,.35);
+}
+.analysis-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(52,152,219,.45); }
+.analysis-btn:active { transform: translateY(0); }
+
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(15,23,35,.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 9999; padding: 20px;
+  opacity: 0; visibility: hidden;
+  transition: opacity .25s ease, visibility .25s ease;
+}
+.modal-overlay.show { opacity: 1; visibility: visible; }
+.modal-box {
+  width: min(720px, 100%);
+  max-height: 86vh; overflow-y: auto;
+  background: var(--bg-card); border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.3);
+  transform: translateY(16px) scale(.98);
+  transition: transform .25s ease;
+}
+.modal-overlay.show .modal-box { transform: translateY(0) scale(1); }
+.modal-header {
+  position: sticky; top: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 22px;
+  background: linear-gradient(135deg, #1a2332, #243447);
+  color: #fff; border-radius: 16px 16px 0 0;
+}
+.modal-title { font-size: 17px; font-weight: 700; }
+.modal-close {
+  width: 32px; height: 32px; border: none; border-radius: 50%;
+  background: rgba(255,255,255,.15); color: #fff; font-size: 20px;
+  cursor: pointer; line-height: 1;
+}
+.modal-close:hover { background: rgba(255,255,255,.3); }
+.modal-body { padding: 20px 22px 26px; }
+.modal-section { margin-bottom: 18px; }
+.modal-section-title {
+  font-size: 14px; font-weight: 700; color: var(--text-primary);
+  margin-bottom: 8px; padding-left: 10px;
+  border-left: 4px solid var(--accent-blue);
+}
+.modal-section-text { font-size: 13px; line-height: 1.7; color: var(--text-secondary); }
+.modal-metric-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 4px 0 8px;
+}
+.modal-metric {
+  background: #f7f9fc; border: 1px solid var(--border-light);
+  border-radius: 10px; padding: 10px 12px;
+}
+.modal-metric-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+.modal-metric-value { font-size: 16px; font-weight: 700; color: var(--text-primary); }
+.modal-metric-value.up { color: var(--accent-red); }
+.modal-metric-value.down { color: var(--accent-green); }
+.modal-driver-item {
+  display: flex; gap: 8px; font-size: 13px; line-height: 1.6;
+  color: var(--text-secondary); margin-bottom: 6px;
+}
+.modal-driver-item::before { content: '•'; color: var(--accent-blue); font-weight: 700; }
+.modal-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.modal-tag {
+  font-size: 12px; padding: 3px 10px; border-radius: 12px; font-weight: 600;
+}
+.modal-tag.red { background: #fdecea; color: #e74c3c; }
+.modal-tag.green { background: #e8f8f5; color: #27ae60; }
+.modal-tag.blue { background: #eaf4fc; color: #3498db; }
+.modal-tag.orange { background: #fef5e7; color: #f39c12; }
+
+@media (max-width: 640px) {
+  .modal-metric-grid { grid-template-columns: 1fr; }
+  .analysis-btn { padding: 5px 10px; font-size: 12px; }
+}
+</style>
+</head>
+<body>
+
+<!-- 加载动画 -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div style="text-align:center;">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">正在获取最新市场数据...</div>
+  </div>
+</div>
+
+<!-- 顶部导航 -->
+<header class="top-header">
+  <div class="logo-area">
+    <div class="logo-icon">安</div>
+    <div>
+      <div class="logo-text">安和垣丰咨信自用网站</div>
+      <div class="logo-sub">Sulfur · MAP · DAP · LFP · Yellow-P Market Monitor</div>
+    </div>
+  </div>
+  <div class="status-area">
+    <div class="status-badge" id="dataSourceBadge">
+      <div class="status-dot" id="sourceDot"></div>
+      <span id="sourceLabel">数据获取中...</span>
+    </div>
+    <div class="update-time" id="updateTime">--</div>
+    <button class="refresh-btn" onclick="refreshData()">🔄 手动刷新</button>
+  </div>
+</header>
+
+<!-- 导航标签 -->
+<nav class="nav-tabs">
+  <div class="nav-tab active" data-panel="sulfur">🟠 硫磺港口库存&报价</div>
+  <div class="nav-tab" data-panel="fertilizer">🔵 磷酸一铵(MAP)</div>
+  <div class="nav-tab" data-panel="dap">🟢 磷酸二铵(DAP)</div>
+  <div class="nav-tab" data-panel="lfp">🟣 磷酸铁&铁锂</div>
+  <div class="nav-tab" data-panel="yp">🔥 黄磷</div>
+  <div class="nav-tab" data-panel="overview">📊 全品种概览</div>
+</nav>
+
+<!-- 主内容 -->
+<div class="main-content">
+
+  <!-- 全品种概览卡片 -->
+  <div class="overview-grid" id="overviewGrid">
+    <!-- JS动态填充 -->
+  </div>
+
+  <!-- ── 硫磺面板 ── -->
+  <div class="panel-section active" id="panelSulfur">
+    <div class="section-title">
+      <span class="section-head">
+        <div class="section-icon" style="background:#fdecea;color:#e74c3c;">S</div>
+        硫磺港口库存与报价
+      </span>
+      <button class="analysis-btn" onclick="openAnalysisModal('sulfur')">📈 行情分析</button>
+    </div>
+    <div class="two-col">
+      <div class="chart-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div class="chart-title">全国港口硫磺总库存</div>
+          <div>
+            <span class="port-total" id="totalInventory">--</span>
+            <span class="port-total-label">万吨</span>
+          </div>
+        </div>
+        <table class="port-table" id="portTable">
+          <thead>
+            <tr><th>港口</th><th>库存(万吨)</th><th>占比</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">港口库存趋势 (近30天)</div>
+        <div class="chart-container">
+          <canvas id="chartInventory"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="two-col">
+      <div class="chart-card">
+        <div class="chart-title">固体硫磺现货价格走势</div>
+        <div class="chart-container">
+          <canvas id="chartSulfurSolid"></canvas>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">镇江港颗粒硫磺报价走势</div>
+        <div class="chart-container">
+          <canvas id="chartSulfurZhenjiang"></canvas>
+        </div>
+      </div>
+    </div>
+    <!-- 中联金硫磺报价 -->
+    <div class="chart-card one-col" id="zljSulfurCard" style="margin-top:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div class="chart-title">🔥 中联金硫磺电子盘/报价明细</div>
+        <div style="font-size:12px;color:#8e9eb5;" id="zljDate">--</div>
+      </div>
+      <div class="two-col" style="margin-top:12px;">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:#5a6b7d;margin-bottom:8px;">山东地炼报价</div>
+          <table class="port-table" id="zljRefineryTable">
+            <thead><tr><th>企业</th><th>产品</th><th>报价(元/吨)</th><th>涨跌</th><th>状态</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div>
+          <div style="font-size:13px;font-weight:600;color:#5a6b7d;margin-bottom:8px;">港口报价</div>
+          <table class="port-table" id="zljPortTable">
+            <thead><tr><th>港口</th><th>报价区间(元/吨)</th><th>涨跌</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <div style="margin-top:12px;padding:10px 14px;background:#f7f9fc;border-radius:8px;">
+            <div style="font-size:13px;color:#5a6b7d;">港口参考价</div>
+            <div style="font-size:22px;font-weight:700;color:#e74c3c;" id="zljRefPrice">-- <span style="font-size:13px;color:#8e9eb5;">元/吨</span></div>
+            <div style="font-size:12px;color:#8e9eb5;margin-top:4px;" id="zljAnalysis"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 磷酸一铵面板 ── -->
+  <div class="panel-section" id="panelFertilizer">
+    <div class="section-title">
+      <span class="section-head">
+        <div class="section-icon" style="background:#d6eaf8;color:#3498db;">MAP</div>
+        磷酸一铵 (Monoammonium Phosphate)
+      </span>
+      <button class="analysis-btn" onclick="openAnalysisModal('fertilizer')">📈 行情分析</button>
+    </div>
+    <div class="two-col">
+      <div class="chart-card">
+        <div class="chart-title">55%粉状磷酸一铵出厂价走势</div>
+        <div class="chart-container">
+          <canvas id="chartMAP55"></canvas>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">73%工业级磷酸一铵价格走势</div>
+        <div class="chart-container">
+          <canvas id="chartMAP73"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="chart-card one-col">
+      <div class="chart-title">磷酸一铵区域报价明细</div>
+      <table class="price-table" id="mapPriceTable">
+        <thead>
+          <tr><th>品种/规格</th><th>区域</th><th>报价(元/吨)</th><th>涨跌</th><th>备注</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── 磷酸二铵面板 ── -->
+  <div class="panel-section" id="panelDap">
+    <div class="section-title">
+      <span class="section-head">
+        <div class="section-icon" style="background:#e8f8f5;color:#27ae60;">DAP</div>
+        磷酸二铵 (Diammonium Phosphate)
+      </span>
+      <button class="analysis-btn" onclick="openAnalysisModal('dap')">📈 行情分析</button>
+    </div>
+    <div class="two-col">
+      <div class="chart-card">
+        <div class="chart-title">64%颗粒磷酸二铵价格走势</div>
+        <div class="chart-container">
+          <canvas id="chartDAP64"></canvas>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">磷酸二铵指导价走势</div>
+        <div class="chart-container">
+          <canvas id="chartDAPGuide"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="chart-card one-col">
+      <div class="chart-title">磷酸二铵区域报价明细</div>
+      <table class="price-table" id="dapPriceTable">
+        <thead>
+          <tr><th>品种/规格</th><th>区域</th><th>报价(元/吨)</th><th>涨跌</th><th>备注</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── 磷酸铁面板 ── -->
+  <div class="panel-section" id="panelLfp">
+    <div class="section-title">
+      <span class="section-head">
+        <div class="section-icon" style="background:#f4ecf7;color:#8e44ad;">LFP</div>
+        磷酸铁 & 磷酸铁锂
+      </span>
+      <button class="analysis-btn" onclick="openAnalysisModal('lfp')">📈 行情分析</button>
+    </div>
+    <div class="two-col">
+      <div class="chart-card">
+        <div class="chart-title">磷酸铁价格走势</div>
+        <div class="chart-container">
+          <canvas id="chartLFP"></canvas>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">磷酸铁锂动力型价格走势</div>
+        <div class="chart-container">
+          <canvas id="chartLFPPower"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="chart-card one-col">
+      <div class="chart-title">磷酸铁产业链价格联动</div>
+      <div class="chart-container" style="height:320px;">
+        <canvas id="chartLFPChain"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 黄磷面板 ── -->
+  <div class="panel-section" id="panelYp">
+    <div class="section-title">
+      <span class="section-head">
+        <div class="section-icon" style="background:#fdebd0;color:#e67e22;">YP</div>
+        黄磷 (Yellow Phosphorus)
+      </span>
+      <button class="analysis-btn" onclick="openAnalysisModal('yp')">📈 行情分析</button>
+    </div>
+    <div class="two-col">
+      <div class="chart-card">
+        <div class="chart-title">黄磷99.9%全国均价走势</div>
+        <div class="chart-container">
+          <canvas id="chartYP"></canvas>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">黄磷主产区价格走势</div>
+        <div class="chart-container">
+          <canvas id="chartYPRegion"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="chart-card one-col">
+      <div class="chart-title">黄磷区域报价明细</div>
+      <table class="price-table" id="ypPriceTable">
+        <thead>
+          <tr><th>品种/规格</th><th>区域</th><th>报价(元/吨)</th><th>涨跌</th><th>备注</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── 全品种概览面板 ── -->
+  <div class="panel-section" id="panelOverview">
+    <div class="section-title">
+      <div class="section-icon" style="background:#fef5e7;color:#f39c12;">📊</div>
+      全品种价格对比概览
+    </div>
+    <div class="two-col">
+      <div class="chart-card">
+        <div class="chart-title">硫磺 vs 磷酸一铵 价格联动</div>
+        <div class="chart-container" style="height:320px;">
+          <canvas id="chartCompare1"></canvas>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">磷酸铁产业链价格传导</div>
+        <div class="chart-container" style="height:320px;">
+          <canvas id="chartCompare2"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="chart-card one-col">
+      <div class="chart-title">各品种30日涨跌幅</div>
+      <div class="chart-container" style="height:260px;">
+        <canvas id="chartChangeRate"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- 数据来源信息 -->
+  <div class="source-info">
+    <div class="source-info-title">📋 数据来源与更新机制</div>
+    <div class="source-grid" id="sourceGrid"></div>
+    <div id="scrapeDetail" style="margin-top:12px;padding-top:10px;border-top:1px solid #e2e8f0;font-size:12px;color:#5a6b7d;">
+      <div id="scrapeDetailContent">爬虫状态加载中...</div>
+    </div>
+    <div style="margin-top:8px; font-size:11px; color:#8e9eb5;">
+      数据每5分钟自动从生意社(100ppi.com)实时爬取更新。爬取成功时使用真实基准价，失败时回退至参考基准价+模拟波动。
+      实际交易价格请以供应商报价为准。
+    </div>
+  </div>
+
+</div>
+
+<!-- 行情分析弹窗 -->
+<div class="modal-overlay" id="analysisModal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="modal-title" id="analysisModalTitle"></div>
+      <button class="modal-close" onclick="closeAnalysisModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="analysisModalBody"></div>
+  </div>
+</div>
+
+<script>
+// ── 全局状态 ──
+let currentData = null;
+let charts = {};
+let currentPanel = 'sulfur';
+const renderedPanels = new Set();
+
+// ── 导航切换 ──
+document.querySelectorAll('.nav-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentPanel = tab.dataset.panel;
+    document.querySelectorAll('.panel-section').forEach(p => p.classList.remove('active'));
+    const panelId = 'panel' + currentPanel.charAt(0).toUpperCase() + currentPanel.slice(1);
+    const el = document.getElementById(panelId);
+    if (el) el.classList.add('active');
+    // 懒加载：首次进入该面板才渲染其图表
+    if (currentData && !renderedPanels.has(currentPanel)) {
+      renderPanel(currentPanel, currentData);
+      renderedPanels.add(currentPanel);
+    }
+  });
+});
+
+// ── 颜色配置 ──
+const COLORS = {
+  sulfur: { main: '#e74c3c', gradient: ['#e74c3c', '#f39c12'] },
+  map: { main: '#3498db', gradient: ['#3498db', '#1abc9c'] },
+  dap: { main: '#27ae60', gradient: ['#27ae60', '#2ecc71'] },
+  lfp: { main: '#8e44ad', gradient: ['#8e44ad', '#9b59b6'] },
+  lfp_power: { main: '#6c3483', gradient: ['#6c3483', '#8e44ad'] },
+  yp: { main: '#e67e22', gradient: ['#e67e22', '#d35400'] },
+  yp_region: { main: '#d35400', gradient: ['#d35400', '#e67e22'] },
+  inventory: { main: '#f39c12', gradient: ['#f39c12', '#e67e22'] },
+};
+
+// ── Chart.js 全局配置 ──
+Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei"';
+Chart.defaults.font.size = 12;
+Chart.defaults.color = '#5a6b7d';
+Chart.register(ChartDataLabels);
+
+// ── 创建渐变填充 ──
+function createGradient(ctx, colors) {
+  const gradient = ctx.createLinearGradient(0, 0, 0, 280);
+  gradient.addColorStop(0, colors[0] + '40');
+  gradient.addColorStop(1, colors[1] + '05');
+  return gradient;
+}
+
+// ── 更新折线图数据（平滑，不重建） ──
+function updateLineChart(canvasId, historyData) {
+  if (charts[canvasId] && charts[canvasId].data) {
+    charts[canvasId].data.labels = historyData.map(d => d.date.slice(5));
+    charts[canvasId].data.datasets[0].data = historyData.map(d => d.price);
+    charts[canvasId].update('none'); // 'none' = 无动画静默更新
+    return charts[canvasId];
+  }
+  return null;
+}
+
+// ── 创建折线图（仅首次） ──
+function createLineChart(canvasId, label, historyData, colorConfig, unit = '元/吨') {
+  // 如果图表已存在，仅更新数据
+  if (charts[canvasId]) {
+    return updateLineChart(canvasId, historyData);
+  }
+
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return null;
+  const ctx = canvas.getContext('2d');
+
+  const gradient = createGradient(ctx, colorConfig.gradient);
+
+  charts[canvasId] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: historyData.map(d => d.date.slice(5)),
+      datasets: [{
+        label: label,
+        data: historyData.map(d => d.price),
+        borderColor: colorConfig.main,
+        backgroundColor: gradient,
+        borderWidth: 2.5,
+        pointRadius: 0,
+        pointHoverRadius: 5,
+        pointHoverBackgroundColor: colorConfig.main,
+        fill: true,
+        tension: 0.3,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 400 }, // 仅首次创建有动画
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        datalabels: { display: false },
+        tooltip: {
+          backgroundColor: '#1a2332',
+          titleColor: '#fff',
+          bodyColor: '#fff',
+          padding: 12,
+          displayColors: false,
+          callbacks: {
+            label: (ctx) => `${ctx.parsed.y.toFixed(0)} ${unit}`
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { maxTicksLimit: 8 }
+        },
+        y: {
+          grid: { color: '#f0f4f8' },
+          ticks: {
+            callback: (v) => v >= 10000 ? (v/10000).toFixed(1) + '万' : v.toFixed(0)
+          }
+        }
+      }
+    }
+  });
+  return charts[canvasId];
+}
+
+// ── 更新面积图数据（平滑） ──
+function updateInventoryChart(canvasId, historyData) {
+  if (charts[canvasId] && charts[canvasId].data) {
+    charts[canvasId].data.labels = historyData.map(d => d.date.slice(5));
+    charts[canvasId].data.datasets[0].data = historyData.map(d => d.total);
+    charts[canvasId].update('none');
+    return charts[canvasId];
+  }
+  return null;
+}
+
+// ── 创建面积图(库存) ──
+function createInventoryChart(canvasId, historyData) {
+  // 如果已存在，仅更新数据
+  if (charts[canvasId]) {
+    return updateInventoryChart(canvasId, historyData);
+  }
+
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return null;
+  const ctx = canvas.getContext('2d');
+
+  const gradient = ctx.createLinearGradient(0, 0, 0, 280);
+  gradient.addColorStop(0, '#f39c1240');
+  gradient.addColorStop(1, '#e67e2205');
+
+  charts[canvasId] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: historyData.map(d => d.date.slice(5)),
+      datasets: [{
+        label: '总库存(万吨)',
+        data: historyData.map(d => d.total),
+        borderColor: '#f39c12',
+        backgroundColor: gradient,
+        borderWidth: 2.5,
+        pointRadius: 0,
+        pointHoverRadius: 5,
+        fill: true,
+        tension: 0.3,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 400 },
+      plugins: {
+        legend: { display: false },
+        datalabels: { display: false },
+        tooltip: {
+          backgroundColor: '#1a2332',
+          callbacks: {
+            label: (ctx) => `${ctx.parsed.y.toFixed(1)} 万吨`
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 8 } },
+        y: { grid: { color: '#f0f4f8' }, ticks: { callback: v => v + '万' } }
+      }
+    }
+  });
+}
+
+// ── 更新多线对比图数据（平滑） ──
+function updateMultiLineChart(canvasId, newDatasets) {
+  if (charts[canvasId] && charts[canvasId].data) {
+    charts[canvasId].data.labels = newDatasets.labels;
+    for (let i = 0; i < newDatasets.datasets.length; i++) {
+      charts[canvasId].data.datasets[i].data = newDatasets.datasets[i].data;
+    }
+    charts[canvasId].update('none');
+    return charts[canvasId];
+  }
+  return null;
+}
+
+// ── 创建多线对比图 ──
+function createMultiLineChart(canvasId, datasets) {
+  // 如果已存在，仅更新数据
+  if (charts[canvasId]) {
+    return updateMultiLineChart(canvasId, datasets);
+  }
+
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return null;
+  const ctx = canvas.getContext('2d');
+
+  charts[canvasId] = new Chart(ctx, {
+    type: 'line',
+    data: datasets,
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 400 },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { usePointStyle: true, padding: 16 } },
+        datalabels: { display: false },
+        tooltip: {
+          backgroundColor: '#1a2332',
+          callbacks: {
+            label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(0)} 元/吨`
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 8 } },
+        y: { grid: { color: '#f0f4f8' } }
+      }
+    }
+  });
+}
+
+// ── 更新涨跌幅柱状图数据（平滑） ──
+function updateBarChart(canvasId, values, colors) {
+  if (charts[canvasId] && charts[canvasId].data) {
+    charts[canvasId].data.datasets[0].data = values;
+    charts[canvasId].data.datasets[0].backgroundColor = colors;
+    charts[canvasId].update('none');
+    return charts[canvasId];
+  }
+  return null;
+}
+
+// ── 创建涨跌幅柱状图 ──
+function createBarChart(canvasId, labels, values, colors) {
+  // 如果已存在，仅更新数据
+  if (charts[canvasId]) {
+    return updateBarChart(canvasId, values, colors);
+  }
+
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return null;
+  const ctx = canvas.getContext('2d');
+
+  charts[canvasId] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        data: values,
+        backgroundColor: colors,
+        borderRadius: 6,
+        barThickness: 36,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 400 },
+      plugins: {
+        legend: { display: false },
+        datalabels: {
+          anchor: 'end',
+          align: 'top',
+          color: '#1a2332',
+          font: { weight: 'bold', size: 13 },
+          formatter: (v) => v > 0 ? '+' + v.toFixed(1) + '%' : v.toFixed(1) + '%'
+        },
+        tooltip: {
+          backgroundColor: '#1a2332',
+          callbacks: { label: (ctx) => `涨跌幅: ${ctx.parsed.y.toFixed(1)}%` }
+        }
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y: { grid: { color: '#f0f4f8' }, ticks: { callback: v => v + '%' } }
+      }
+    }
+  });
+}
+
+// ── 更新概览卡片 ──
+function updateOverviewCards(data) {
+  const grid = document.getElementById('overviewGrid');
+  const prices = data.prices;
+
+  // 计算30日涨跌
+  function calcChange(historyKey) {
+    const h = data.history[historyKey];
+    if (!h || h.length < 2) return { pct: 0, dir: 'stable' };
+    const first = h[0].price;
+    const last = h[h.length - 1].price;
+    const pct = ((last - first) / first * 100);
+    return { pct: pct, dir: pct > 0.5 ? 'up' : pct < -0.5 ? 'down' : 'stable' };
+  }
+
+  const items = [
+    {
+      key: 'sulfur', cls: 'sulfur',
+      title: '固体硫磺现货价(区间)',
+      price: prices.sulfur_solid,
+      unit: '元/吨',
+      range: solidSulfurRange(prices),
+      change: calcChange('sulfur_solid'),
+    },
+    {
+      key: 'map', cls: 'map',
+      title: '磷酸一铵 55%粉',
+      price: prices.map_55,
+      unit: '元/吨',
+      change: calcChange('map_55'),
+    },
+    {
+      key: 'dap', cls: 'dap',
+      title: '磷酸二铵 64%颗粒',
+      price: prices.dap_64,
+      unit: '元/吨',
+      change: calcChange('dap_64'),
+    },
+    {
+      key: 'lfp', cls: 'lfp',
+      title: '磷酸铁',
+      price: prices.lfp,
+      unit: '元/吨',
+      change: calcChange('lfp'),
+    },
+    {
+      key: 'yp', cls: 'yp',
+      title: '黄磷 99.9%',
+      price: prices.yp,
+      unit: '元/吨',
+      change: calcChange('yp'),
+    },
+  ];
+
+  grid.innerHTML = items.map(item => {
+    const badgeCls = item.change.dir === 'up' ? 'badge-up' : item.change.dir === 'down' ? 'badge-down' : 'badge-stable';
+    const badgeText = item.change.dir === 'up' ? '↑ 上涨' : item.change.dir === 'down' ? '↓ 下跌' : '— 持稳';
+    const changeCls = item.change.dir === 'up' ? 'change-up' : item.change.dir === 'down' ? 'change-down' : '';
+    const changeText = item.change.pct > 0 ? `+${item.change.pct.toFixed(1)}%` : `${item.change.pct.toFixed(1)}%`;
+    const priceStr = item.price >= 10000 ? (item.price / 10000).toFixed(2) + '万' : item.price.toFixed(0);
+    const priceDisplay = item.range ? item.range[0].toLocaleString() + ' ~ ' + item.range[1].toLocaleString() : priceStr;
+    const priceCls = item.range ? 'card-price card-price-range' : 'card-price';
+    const unitText = item.range ? '元/吨 (区间)' : item.unit;
+
+    return `
+      <div class="overview-card ${item.cls}">
+        <div class="card-header">
+          <span class="card-title">${item.title}</span>
+          <span class="card-badge ${badgeCls}">${badgeText}</span>
+        </div>
+        <div class="${priceCls}">${priceDisplay}</div>
+        <div class="card-unit">${unitText}</div>
+        <div class="card-change ${changeCls}">30日涨跌: ${changeText}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ── 更新港口库存表 ──
+function updatePortTable(data) {
+  const tbody = document.querySelector('#portTable tbody');
+  const inv = data.port_inventory;
+  const total = data.total_inventory;
+  const maxInv = Math.max(...Object.values(inv));
+
+  const colors = ['#e74c3c', '#f39c12', '#3498db', '#27ae60', '#8e44ad', '#1abc9c'];
+
+  tbody.innerHTML = Object.entries(inv).map(([port, val], i) => {
+    const pct = (val / total * 100).toFixed(1);
+    const barW = (val / maxInv * 120).toFixed(0);
+    return `
+      <tr>
+        <td class="port-name">${port}</td>
+        <td><span class="port-bar" style="width:${barW}px;background:${colors[i]}"></span>${val.toFixed(1)}</td>
+        <td>${pct}%</td>
+      </tr>
+    `;
+  }).join('');
+
+  document.getElementById('totalInventory').textContent = total.toFixed(1);
+}
+
+// ── 更新中联金硫磺报价 ──
+function updateZLJSulfur(data) {
+  const zlj = data.zlj_sulfur;
+  if (!zlj) return;
+
+  document.getElementById('zljDate').textContent = '数据日期: ' + (zlj.date || '--');
+
+  // 地炼报价表
+  const refTbody = document.querySelector('#zljRefineryTable tbody');
+  if (refTbody) {
+    refTbody.innerHTML = (zlj.refineries || []).map(r => {
+      let priceText, changeText, changeCls, statusCls;
+      if (r.price === null || r.price === undefined) {
+        priceText = '<span style="color:#aaa;">—</span>';
+        changeText = '—';
+        changeCls = '';
+      } else {
+        priceText = '<span style="font-weight:700;color:#e74c3c;">' + r.price + '</span>';
+        changeText = r.change > 0 ? '+' + r.change : r.change < 0 ? r.change : '持稳';
+        changeCls = r.change > 0 ? 'change-up' : r.change < 0 ? 'change-down' : '';
+      }
+      if (r.status === '报价') {
+        statusCls = '<span style="color:#27ae60;font-size:12px;">●</span>';
+      } else {
+        statusCls = '<span style="color:#e74c3c;font-size:12px;">○</span>';
+      }
+      return `<tr>
+        <td class="port-name">${r.name}</td>
+        <td>${r.product}</td>
+        <td>${priceText}</td>
+        <td class="${changeCls}">${changeText}</td>
+        <td style="font-size:12px;">${statusCls} ${r.status}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // 港口报价表
+  const portTbody = document.querySelector('#zljPortTable tbody');
+  if (portTbody) {
+    portTbody.innerHTML = (zlj.ports || []).map(p => {
+      const changeText = p.change_low + ' ~ ' + p.change_high + ' 元';
+      const changeCls = p.change_low < 0 ? 'change-down' : 'change-up';
+      return `<tr>
+        <td class="port-name">${p.name}</td>
+        <td><span style="font-weight:700;color:#e74c3c;">${p.price_low} ~ ${p.price_high}</span></td>
+        <td class="${changeCls}">${changeText}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // 参考价
+  const refEl = document.getElementById('zljRefPrice');
+  if (refEl && zlj.reference_price) {
+    refEl.innerHTML = zlj.reference_price + ' <span style="font-size:13px;color:#8e9eb5;">元/吨</span>';
+  }
+
+  // 分析
+  const analysisEl = document.getElementById('zljAnalysis');
+  if (analysisEl && zlj.analysis) {
+    analysisEl.textContent = zlj.analysis;
+  }
+}
+
+// ── 更新MAP价格表 ──
+function updateMAPTable(data) {
+  const tbody = document.querySelector('#mapPriceTable tbody');
+  const p = data.prices;
+
+  const rows = [
+    ['55%粉状', '湖北', p.map_55, '+4.4%', '主流出厂价'],
+    ['55%粉状', '山东/安徽/河南', p.map_55 + 80, '+3.5%', '送到报价'],
+    ['55%粉状', '四川', p.map_55 - 150, '+2.8%', '送到报价'],
+    ['73%工业级', '湖北/四川/云南', p.map_73, '+5.1%', '成交逐步向高端'],
+    ['73%工业级', '贵州', p.map_73 + 200, '+4.8%', '工业级出厂'],
+  ];
+
+  tbody.innerHTML = rows.map(r => {
+    const changeCls = r[3].startsWith('+') ? 'change-up' : r[3].startsWith('-') ? 'change-down' : '';
+    return `<tr>
+      <td>${r[0]}</td><td>${r[1]}</td>
+      <td class="price-highlight">${r[2].toFixed(0)}</td>
+      <td class="${changeCls}">${r[3]}</td><td>${r[4]}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── 更新DAP价格表 ──
+function updateDAPTable(data) {
+  const tbody = document.querySelector('#dapPriceTable tbody');
+  const p = data.prices;
+
+  const rows = [
+    ['64%颗粒', '湖北', p.dap_64, '+14.6%', '自提出厂'],
+    ['64%颗粒', '山东', p.dap_64 + 150, '+12.3%', '自提出库'],
+    ['64%颗粒', '东北', p.dap_64 - 250, '+8.9%', '自提出厂'],
+    ['57%颗粒', '全国', p.dap_64 - 400, '+10.2%', '到站指导价'],
+    ['98%含量', '全国', p.dap_98, '+6.5%', '市场价'],
+  ];
+
+  tbody.innerHTML = rows.map(r => {
+    const changeCls = r[3].startsWith('+') ? 'change-up' : r[3].startsWith('-') ? 'change-down' : '';
+    return `<tr>
+      <td>${r[0]}</td><td>${r[1]}</td>
+      <td class="price-highlight">${r[2].toFixed(0)}</td>
+      <td class="${changeCls}">${r[3]}</td><td>${r[4]}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── 更新数据来源 ──
+function updateSourceInfo(data) {
+  const grid = document.getElementById('sourceGrid');
+  const sources = data.source_info;
+  const colors = {
+    sulfur: '#e74c3c',
+    map: '#3498db',
+    dap: '#27ae60',
+    lfp: '#8e44ad',
+    yp: '#e67e22',
+    inventory: '#f39c12',
+    zlj: '#c0392b',
+  };
+
+  grid.innerHTML = Object.entries(sources).map(([key, name]) => `
+    <div class="source-item">
+      <span class="source-dot" style="background:${colors[key] || '#888'}"></span>
+      <span>${key === 'inventory' ? '港口库存' : key.toUpperCase()}: ${name}</span>
+    </div>
+  `).join('');
+
+  // 更新爬虫状态徽章
+  const badge = document.getElementById('dataSourceBadge');
+  const dot = document.getElementById('sourceDot');
+  const label = document.getElementById('sourceLabel');
+
+  if (data.scrape_status) {
+    const success = data.scrape_status.success_count || 0;
+    const priceSources = data.scrape_status.price_sources || {};
+    const scrapedCount = Object.values(priceSources).filter(v => v.includes('爬取')).length;
+    const total = Object.keys(priceSources).length;
+
+    if (scrapedCount >= 3) {
+      dot.style.background = '#27ae60';
+      label.textContent = `实时爬取(${scrapedCount}/${total}品种)`;
+      badge.style.background = 'rgba(39,174,96,0.2)';
+      label.style.color = '#27ae60';
+    } else if (scrapedCount >= 1) {
+      dot.style.background = '#f39c12';
+      label.textContent = `部分爬取(${scrapedCount}/${total}品种)`;
+      badge.style.background = 'rgba(243,156,18,0.2)';
+      label.style.color = '#f39c12';
+    } else {
+      dot.style.background = '#e74c3c';
+      label.textContent = '使用参考基准价';
+      badge.style.background = 'rgba(231,76,60,0.2)';
+      label.style.color = '#e74c3c';
+    }
+
+    // 显示爬虫详情
+    const detailDiv = document.getElementById('scrapeDetailContent');
+    const priceDetails = Object.entries(priceSources).map(([key, source]) => {
+      const icon = source.includes('实时爬取') ? '✅' : source.includes('爬取') ? '🟡' : '⚪';
+      return `${icon} ${key}: ${source}`;
+    }).join('<br>');
+    const scrapeTime = data.scrape_status.time || '未知';
+    detailDiv.innerHTML = `<strong>爬取时间: ${scrapeTime}</strong><br>${priceDetails}`;
+  }
+}
+
+// ── 计算涨跌幅 ──
+function calcChangeRate(historyData) {
+  if (!historyData || historyData.length < 2) return 0;
+  const first = historyData[0].price;
+  const last = historyData[historyData.length - 1].price;
+  return ((last - first) / first * 100);
+}
+
+// ── 硫磺现货锚定(以镇江港颗粒硫磺为参考，区间展示) ──
+function solidSulfurRange(prices) {
+  const port = prices.sulfur_zhenjiang;
+  if (!port) return [0, 0];
+  return [Math.round(port - 400), Math.round(port - 200)];
+}
+
+// ── 懒加载：仅渲染当前面板，其余面板首次切换时再渲染 ──
+function renderPanel(panel, data) {
+  const p = data.prices;
+  switch (panel) {
+    case 'sulfur':
+      updatePortTable(data);
+      createInventoryChart('chartInventory', data.history.port_inventory);
+      createLineChart('chartSulfurSolid', '固体硫磺(港口锚定)', data.history.sulfur_solid, COLORS.sulfur);
+      createLineChart('chartSulfurZhenjiang', '镇江港颗粒硫磺', data.history.sulfur_zhenjiang, COLORS.sulfur);
+      updateZLJSulfur(data);
+      break;
+    case 'fertilizer':
+      createLineChart('chartMAP55', '55%粉状MAP', data.history.map_55, COLORS.map);
+      createLineChart('chartMAP73', '73%工业级MAP', data.history.map_73, COLORS.map);
+      updateMAPTable(data);
+      break;
+    case 'dap':
+      createLineChart('chartDAP64', '64%颗粒DAP', data.history.dap_64, COLORS.dap);
+      {
+        const dapGuideHistory = data.history.dap_64.map(d => ({ date: d.date, price: d.price * 1.05 }));
+        createLineChart('chartDAPGuide', 'DAP指导价', dapGuideHistory, COLORS.dap);
+      }
+      updateDAPTable(data);
+      break;
+    case 'lfp':
+      createLineChart('chartLFP', '磷酸铁', data.history.lfp, COLORS.lfp);
+      createLineChart('chartLFPPower', '磷酸铁锂动力型', data.history.lfp_power, COLORS.lfp_power);
+      {
+        const lfpLabels = data.history.lfp.map(d => d.date.slice(5));
+        createMultiLineChart('chartLFPChain', {
+          labels: lfpLabels,
+          datasets: [
+            { label: '黄磷 (上游)', data: data.history.yp.map(d => d.price / 2), borderColor: '#e67e22', borderWidth: 2, pointRadius: 0, tension: 0.3 },
+            { label: '73%MAP (原料)', data: data.history.map_73.map(d => d.price), borderColor: '#3498db', borderWidth: 2, pointRadius: 0, tension: 0.3 },
+            { label: '磷酸铁', data: data.history.lfp.map(d => d.price), borderColor: '#8e44ad', borderWidth: 2, pointRadius: 0, tension: 0.3 },
+            { label: '磷酸铁锂', data: data.history.lfp_power.map(d => d.price / 5), borderColor: '#6c3483', borderWidth: 2, pointRadius: 0, tension: 0.3 },
+          ]
+        });
+      }
+      break;
+    case 'yp':
+      createLineChart('chartYP', '黄磷99.9%均价', data.history.yp, COLORS.yp);
+      {
+        const ypSichuan = data.history.yp.map(d => ({ date: d.date, price: d.price - 250 }));
+        const ypHubei = data.history.yp.map(d => ({ date: d.date, price: d.price - 250 }));
+        const ypJiangsu = data.history.yp.map(d => ({ date: d.date, price: d.price - 350 }));
+        const ypRegionLabels = data.history.yp.map(d => d.date.slice(5));
+        createMultiLineChart('chartYPRegion', {
+          labels: ypRegionLabels,
+          datasets: [
+            { label: '四川', data: ypSichuan.map(d => d.price), borderColor: '#e67e22', borderWidth: 2, pointRadius: 0, tension: 0.3 },
+            { label: '湖北', data: ypHubei.map(d => d.price), borderColor: '#d35400', borderWidth: 2, pointRadius: 0, tension: 0.3 },
+            { label: '江苏(送到)', data: ypJiangsu.map(d => d.price), borderColor: '#f39c12', borderWidth: 2, pointRadius: 0, tension: 0.3 },
+          ]
+        });
+      }
+      {
+        const ypTbody = document.querySelector('#ypPriceTable tbody');
+        const ypRows = [
+          ['99.9%优等品', '全国均价', p.yp, '-0.06%', 'CBC金属网07-23'],
+          ['99.9%优等品', '四川(自提)', p.yp - 250, '0%', '承兑净磷含税'],
+          ['99.9%优等品', '湖北(自提)', p.yp - 250, '0%', '承兑净磷含税'],
+          ['99.9%优等品', '江苏(送到)', p.yp + 1300, '0%', '云南出厂+运费'],
+          ['99.9%优等品', '山东(送到)', p.yp + 1500, '0%', '云南出厂+运费'],
+        ];
+        ypTbody.innerHTML = ypRows.map(r => {
+          const changeCls = r[3].startsWith('+') ? 'change-up' : r[3].startsWith('-') ? 'change-down' : '';
+          return `<tr><td>${r[0]}</td><td>${r[1]}</td><td class="price-highlight">${r[2].toFixed(0)}</td><td class="${changeCls}">${r[3]}</td><td>${r[4]}</td></tr>`;
+        }).join('');
+      }
+      break;
+    case 'overview':
+      {
+        const labels30 = data.history.sulfur_solid.map(d => d.date.slice(5));
+        createMultiLineChart('chartCompare1', {
+          labels: labels30,
+          datasets: [
+            { label: '硫磺现货', data: data.history.sulfur_solid.map(d => d.price), borderColor: '#e74c3c', borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y' },
+            { label: '磷酸一铵55%', data: data.history.map_55.map(d => d.price), borderColor: '#3498db', borderWidth: 2, pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
+          ]
+        });
+        createMultiLineChart('chartCompare2', {
+          labels: labels30,
+          datasets: [
+            { label: '黄磷(÷2)', data: data.history.yp.map(d => d.price / 2), borderColor: '#e67e22', borderWidth: 2, pointRadius: 0, tension: 0.3 },
+            { label: 'MAP 73%工业级', data: data.history.map_73.map(d => d.price), borderColor: '#3498db', borderWidth: 2, pointRadius: 0, tension: 0.3 },
+            { label: '磷酸铁', data: data.history.lfp.map(d => d.price), borderColor: '#8e44ad', borderWidth: 2, pointRadius: 0, tension: 0.3 },
+            { label: '磷酸铁锂(÷5)', data: data.history.lfp_power.map(d => d.price / 5), borderColor: '#6c3483', borderWidth: 2, pointRadius: 0, tension: 0.3 },
+          ]
+        });
+        const changeLabels = ['硫磺固体', '镇江港硫磺', 'MAP 55%', 'MAP 73%', 'DAP 64%', '磷酸铁', '磷酸铁锂', '黄磷'];
+        const changeValues = [
+          calcChangeRate(data.history.sulfur_solid),
+          calcChangeRate(data.history.sulfur_zhenjiang),
+          calcChangeRate(data.history.map_55),
+          calcChangeRate(data.history.map_73),
+          calcChangeRate(data.history.dap_64),
+          calcChangeRate(data.history.lfp),
+          calcChangeRate(data.history.lfp_power),
+          calcChangeRate(data.history.yp),
+        ];
+        const changeColors = changeValues.map(v => v > 0 ? '#e74c3c' : '#27ae60');
+        createBarChart('chartChangeRate', changeLabels, changeValues, changeColors);
+      }
+      break;
+  }
+}
+
+// ── 全量渲染(懒加载入口) ──
+function renderAll(data) {
+  currentData = data;
+
+  // 更新时间
+  document.getElementById('updateTime').textContent = '更新于 ' + data.timestamp;
+
+  // 一号锚定：固体硫磺现货价以镇江港颗粒硫磺为参考，下浮200-400(中点-300)，区间展示
+  if (!data.__sulfurAnchored && data.prices.sulfur_zhenjiang) {
+    const port = data.prices.sulfur_zhenjiang;
+    data.prices.sulfur_solid = Math.round(port - 300);
+    if (data.history.sulfur_zhenjiang) {
+      data.history.sulfur_solid = data.history.sulfur_zhenjiang.map(d => ({ date: d.date, price: Math.round(d.price - 300) }));
+    }
+    data.__sulfurAnchored = true;
+  }
+
+  // 概览卡片(含固体硫磺区间)
+  updateOverviewCards(data);
+
+  // 只渲染当前面板(懒加载，缩短进入/刷新耗时)
+  renderPanel(currentPanel, data);
+  renderedPanels.add(currentPanel);
+
+  // 数据来源
+  updateSourceInfo(data);
+}
+
+// ── 行情分析弹窗 ──
+function dirCls(v) {
+  if (v > 0.5) return 'up';
+  if (v < -0.5) return 'down';
+  return '';
+}
+
+function metricsGridHTML(metrics) {
+  return `<div class="modal-metric-grid">` + metrics.map(m => `
+    <div class="modal-metric">
+      <div class="modal-metric-label">${m.label}</div>
+      <div class="modal-metric-value ${m.dir || ''}">${m.value}</div>
+    </div>`).join('') + `</div>`;
+}
+
+function buildMetricsHTML(category, data) {
+  const p = data.prices || {};
+  const cr = (k) => calcChangeRate((data.history && data.history[k]) || []);
+  const fmt = (v) => (v >= 10000 ? (v / 10000).toFixed(2) + '万' : (v == null ? '--' : Math.round(v).toLocaleString()));
+  if (category === 'sulfur') {
+    const range = solidSulfurRange(p);
+    return metricsGridHTML([
+      { label: '固体硫磺现货价(区间)', value: range[0].toLocaleString() + ' ~ ' + range[1].toLocaleString() + ' 元/吨' },
+      { label: '镇江港颗粒硫磺(参考)', value: fmt(p.sulfur_zhenjiang) + ' 元/吨', dir: dirCls(cr('sulfur_zhenjiang')) },
+      { label: '液体硫磺', value: fmt(p.sulfur_liquid) + ' 元/吨' },
+      { label: '锚定逻辑', value: '港口价 −200~−400' },
+    ]);
+  }
+  if (category === 'fertilizer') {
+    return metricsGridHTML([
+      { label: '磷酸一铵 55%粉', value: fmt(p.map_55) + ' 元/吨', dir: dirCls(cr('map_55')) },
+      { label: '磷酸一铵 73%工业级', value: fmt(p.map_73) + ' 元/吨', dir: dirCls(cr('map_73')) },
+      { label: '30日涨跌(55%)', value: (cr('map_55') > 0 ? '+' : '') + cr('map_55').toFixed(1) + '%' },
+      { label: '数据来源', value: '生意社/磷化工频道' },
+    ]);
+  }
+  if (category === 'dap') {
+    return metricsGridHTML([
+      { label: '磷酸二铵 64%颗粒', value: fmt(p.dap_64) + ' 元/吨', dir: dirCls(cr('dap_64')) },
+      { label: '磷酸二铵 98%', value: fmt(p.dap_98) + ' 元/吨' },
+      { label: '30日涨跌(64%)', value: (cr('dap_64') > 0 ? '+' : '') + cr('dap_64').toFixed(1) + '%' },
+      { label: '数据来源', value: '生意社' },
+    ]);
+  }
+  if (category === 'lfp') {
+    return metricsGridHTML([
+      { label: '磷酸铁', value: fmt(p.lfp) + ' 元/吨', dir: dirCls(cr('lfp')) },
+      { label: '磷酸铁锂动力型', value: fmt(p.lfp_power) + ' 元/吨', dir: dirCls(cr('lfp_power')) },
+      { label: '30日涨跌(铁锂)', value: (cr('lfp_power') > 0 ? '+' : '') + cr('lfp_power').toFixed(1) + '%' },
+      { label: '数据来源', value: '百川盈孚/Mysteel' },
+    ]);
+  }
+  if (category === 'yp') {
+    return metricsGridHTML([
+      { label: '黄磷 99.9%', value: fmt(p.yp) + ' 元/吨', dir: dirCls(cr('yp')) },
+      { label: '四川(自提)', value: fmt(p.yp - 250) + ' 元/吨' },
+      { label: '江苏(送到)', value: fmt(p.yp + 1300) + ' 元/吨' },
+      { label: '30日涨跌', value: (cr('yp') > 0 ? '+' : '') + cr('yp').toFixed(1) + '%' },
+    ]);
+  }
+  return '';
+}
+
+const ANALYSIS = {
+  sulfur: {
+    title: '硫磺 行情分析',
+    intro: '固体硫磺现货价以镇江港颗粒硫磺为锚定参考，在其基础上下浮 200~400 元/吨（中点 −300）作为区间报价，反映地炼出厂与港口倒挂后的可成交水平。',
+    drivers: [
+      '镇江港颗粒硫磺库存高位（约 36 万吨），压制港口现货升水；',
+      '山东地炼固体/液体硫磺报价随原油与装置开工波动；',
+      '下游磷肥、硫酸开工旺季支撑硫磺需求；',
+      '进口货源到港节奏影响短期供需平衡。'
+    ],
+    outlook: '短期港口锚定区间震荡为主，若港口去库加速则区间上沿有望抬升。',
+    tags: [['港口库存高企', 'red'], ['需求旺季支撑', 'green'], ['区间震荡', 'blue']]
+  },
+  fertilizer: {
+    title: '磷酸一铵(MAP) 行情分析',
+    intro: '磷酸一铵受原料硫磺、磷矿石及出口情绪共同驱动，55%粉状出厂价与 73%工业级价格分化。',
+    drivers: [
+      '硫磺成本端（锚定港口价）提供底部支撑；',
+      '秋季备肥与出口集港拉动需求；',
+      '磷矿石供应偏紧推升成本；',
+      '政策端出口法检节奏影响边际供给。'
+    ],
+    outlook: '旺季预期下易涨难跌，关注出口放量兑现程度。',
+    tags: [['成本支撑', 'green'], ['出口预期', 'orange'], ['偏强运行', 'red']]
+  },
+  dap: {
+    title: '磷酸二铵(DAP) 行情分析',
+    intro: '磷酸二铵国内外价差明显，64%颗粒以内贸与出口双轨定价，98%高端品种溢价稳定。',
+    drivers: [
+      '国际二铵价格高位，出口利润可观；',
+      '国内淡储与春耕备货托底；',
+      '硫磺、合成氨成本支撑；',
+      '企业检修影响阶段性供给。'
+    ],
+    outlook: '出口订单充裕下价格偏强，内贸随季节小幅波动。',
+    tags: [['出口强劲', 'red'], ['成本支撑', 'green'], ['偏强', 'orange']]
+  },
+  lfp: {
+    title: '磷酸铁 & 磷酸铁锂 行情分析',
+    intro: '磷酸铁锂价格受碳酸锂重心与电芯排产主导，磷酸铁环节跟随黄磷、磷酸成本。',
+    drivers: [
+      '碳酸锂价格波动直接传导至铁锂；',
+      '动力与储能电芯排产决定需求强度；',
+      '磷酸铁成本受黄磷/磷酸影响；',
+      '产能过剩背景下加工费承压。'
+    ],
+    outlook: '锂价企稳前铁锂仍震荡，产业链利润向上游资源端集中。',
+    tags: [['锂价主导', 'orange'], ['产能过剩', 'red'], ['震荡筑底', 'blue']]
+  },
+  yp: {
+    title: '黄磷 行情分析',
+    intro: '黄磷价格受云南/四川枯水期电力成本、环保限产与出口共同影响，区域价差显著。',
+    drivers: [
+      '云南枯水期电价抬升冶炼成本；',
+      '环保与能耗双控限制开工；',
+      '热法磷酸与草甘膦需求支撑；',
+      '四川、湖北、江苏区域送到价差明显。'
+    ],
+    outlook: '成本刚性下价格易涨难跌，关注水电来水与限产政策。',
+    tags: [['成本刚性', 'red'], ['限产支撑', 'green'], ['区域分化', 'blue']]
+  }
+};
+
+function openAnalysisModal(category) {
+  const a = ANALYSIS[category];
+  if (!a) return;
+  document.getElementById('analysisModalTitle').textContent = a.title;
+  const metricsHTML = buildMetricsHTML(category, currentData || { prices: {}, history: {} });
+  const driversHTML = (a.drivers || []).map(d => `<div class="modal-driver-item">${d}</div>`).join('');
+  const tagsHTML = (a.tags || []).map(t => `<span class="modal-tag ${t[1]}">${t[0]}</span>`).join('');
+  document.getElementById('analysisModalBody').innerHTML = `
+    <div class="modal-section">
+      <div class="modal-section-title">品种综述</div>
+      <div class="modal-section-text">${a.intro}</div>
+    </div>
+    <div class="modal-section">
+      <div class="modal-section-title">核心指标</div>
+      ${metricsHTML}
+    </div>
+    <div class="modal-section">
+      <div class="modal-section-title">核心驱动</div>
+      ${driversHTML}
+    </div>
+    <div class="modal-section">
+      <div class="modal-section-title">后市展望</div>
+      <div class="modal-section-text">${a.outlook}</div>
+    </div>
+    <div class="modal-section">
+      <div class="modal-section-title">标签</div>
+      <div class="modal-tags">${tagsHTML}</div>
+    </div>
+  `;
+  document.getElementById('analysisModal').classList.add('show');
+}
+
+function closeAnalysisModal() {
+  document.getElementById('analysisModal').classList.remove('show');
+}
+
+// 点击遮罩或ESC关闭
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAnalysisModal(); });
+document.getElementById('analysisModal').addEventListener('click', (e) => {
+  if (e.target.id === 'analysisModal') closeAnalysisModal();
+});
+
+// ── 获取数据 ──
+async function fetchData() {
+  try {
+    const resp = await fetch('/api/data');
+    const data = await resp.json();
+    return data;
+  } catch (e) {
+    console.error('获取数据失败:', e);
+    return null;
+  }
+}
+
+// ── 刷新数据 ──
+async function refreshData() {
+  try {
+    const btn = document.querySelector('.refresh-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '🔄 刷新中...'; }
+    const resp = await fetch('/api/refresh');
+    const data = await resp.json();
+    if (data) {
+      renderedPanels.clear();
+      renderAll(data);
+      if (btn) { btn.textContent = '✓ 已刷新'; setTimeout(() => { if (btn) { btn.textContent = '🔄 手动刷新'; btn.disabled = false; } }, 1200); }
+    } else if (btn) {
+      btn.textContent = '🔄 手动刷新'; btn.disabled = false;
+    }
+  } catch (e) {
+    console.error('刷新失败:', e);
+    const btn = document.querySelector('.refresh-btn');
+    if (btn) { btn.textContent = '🔄 手动刷新'; btn.disabled = false; }
+  }
+}
+
+// ── 初始化 ──
+async function init() {
+  const data = await fetchData();
+  if (data) {
+    renderAll(data);
+    document.getElementById('loadingOverlay').style.opacity = '0';
+    setTimeout(() => {
+      document.getElementById('loadingOverlay').style.display = 'none';
+    }, 300);
+  }
+
+  // 自动刷新 每5分钟（与后端数据更新周期同步），静默更新不重建图表
+  setInterval(async () => {
+    const data = await fetchData();
+    if (data) { renderedPanels.clear(); renderAll(data); }
+  }, 300000);
+}
+
+init();
+</script>
+</body>
+</html>
