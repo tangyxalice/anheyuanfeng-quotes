@@ -200,39 +200,43 @@ def scrape_real_data():
 
 
 def generate_history(base_price, days=30, volatility=0.03, trend=0.002):
-    history = []
-    price = base_price * (1 - trend * days)
-    for i in range(days):
-        price += random.gauss(0, volatility * base_price / 100) + trend * base_price / 100
-        price = max(base_price * 0.7, min(base_price * 1.5, price))
-        date = (datetime.now() - timedelta(days=days - i)).strftime("%Y-%m-%d")
-        history.append({"date": date, "price": round(price, 2)})
-    return history
+    """无真实走势时的回退：末点(今天)锚定当前价，保证图表末端与卡片价一致。"""
+    return generate_history_from_real(base_price, [], days, volatility, trend)
 
 
 def generate_history_from_real(base_price, real_history_list, days=30, volatility=0.02, trend=0.002):
-    history = []
-    if real_history_list:
-        real_data = list(reversed(real_history_list))
-        year = datetime.now().year
-        for item in real_data:
-            full_date = f"{year}-{item[0]}"
-            history.append({"date": full_date, "price": float(item[1])})
-        remaining = days - len(real_data)
-        if remaining > 0:
-            first_price = history[0]["price"] if history else base_price
-            price = first_price * (1 - trend * remaining)
-            start_date = datetime.now() - timedelta(days=days)
-            for i in range(remaining):
-                price += random.gauss(0, volatility * base_price / 100) + trend * base_price / 100
-                price = max(base_price * 0.7, min(base_price * 1.5, price))
-                date = (start_date + timedelta(days=i)).strftime("%Y-%m-%d")
-                history.append({"date": date, "price": round(price, 2)})
-        history.sort(key=lambda x: x["date"])
-        if len(history) > days:
-            history = history[-days:]
+    """生成 days 天走势：最后一天(今天)价格恒等于当前价 base_price，与卡片价一致。
+    优先用真实走势做形状(缩放对齐)；无真实数据时以 base 为中枢小幅游走+均值回归，
+    整体平缓(±10%内)，避免离谱涨跌。"""
+    base_price = float(base_price)
+    today = datetime.now().date()
+    real_prices = [float(x[1]) for x in reversed(real_history_list)] if real_history_list else []
+
+    if len(real_prices) >= 3:
+        # 真实走势优先：缩放后作为形状，末点=base
+        ref = real_prices[-1] or base_price
+        scale = base_price / ref if ref else 1.0
+        n = min(len(real_prices), days)
+        sim = [round(p * scale, 2) for p in real_prices[-n:]]
+        while len(sim) < days:
+            prev = sim[0]
+            sim.insert(0, round(prev * (1 + random.gauss(0, max(volatility, 0.5) / 100)), 2))
+        sim = sim[-days:]
     else:
-        history = generate_history(base_price, days, volatility, trend)
+        # 无真实走势：以 base 为中枢小幅游走 + 均值回归，末点=base
+        price = base_price * (1 - random.uniform(0, 0.025))
+        sim = []
+        for _ in range(days):
+            price += random.gauss(0, volatility * base_price / 100)
+            price += (base_price - price) * 0.15   # 均值回归，防止漂太远
+            price = max(base_price * 0.88, min(base_price * 1.12, price))
+            sim.append(round(price, 2))
+    sim[-1] = round(base_price, 2)
+
+    history = []
+    for i in range(days):
+        d = today - timedelta(days=days - 1 - i)
+        history.append({"date": d.strftime("%Y-%m-%d"), "price": sim[i]})
     return history
 
 

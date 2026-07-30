@@ -411,33 +411,34 @@ def generate_history(base_price, days=30, volatility=0.03, trend=0.002):
 
 
 def generate_history_from_real(base_price, real_history_list, days=30, volatility=0.02, trend=0.002):
-    """生成 days 天走势：最后一天(今天)价格恒等于当前价 base_price，确保与卡片价一致。
-    优先用真实走势做形状；无真实数据时生成平滑随机游走，末点锚定 base_price。"""
+    """生成 days 天走势：最后一天(今天)价格恒等于当前价 base_price，与卡片价一致。
+    优先用真实走势做形状(缩放对齐)；无真实数据时以 base 为中枢小幅游走+均值回归，
+    整体平缓(±10%内)，避免离谱涨跌。"""
     base_price = float(base_price)
     today = datetime.now().date()
-
-    # 1) 生成以 base_price 收尾的模拟基线(末点=当前价)
-    sim = []
-    price = base_price * (1 - trend * days)
-    for _ in range(days):
-        price += random.gauss(0, volatility * base_price / 100) + trend * base_price / 100
-        price = max(base_price * 0.6, min(base_price * 1.6, price))
-        sim.append(round(price, 2))
-    sim[-1] = round(base_price, 2)
-
-    # 2) 若有真实走势，覆盖最近若干天(末点保留 base_price)；按量级缩放避免断层
     real_prices = [float(x[1]) for x in reversed(real_history_list)] if real_history_list else []
-    n_real = min(len(real_prices), max(0, days - 1))
-    if n_real > 0:
+
+    if len(real_prices) >= 3:
+        # 真实走势优先：缩放后作为形状，末点=base
         ref = real_prices[-1] or base_price
         scale = base_price / ref if ref else 1.0
-        for j in range(n_real):
-            idx = days - 1 - (n_real - j)  # 覆盖 days-n_real .. days-2
-            if idx >= 0:
-                sim[idx] = round(real_prices[j] * scale, 2)
-    sim[-1] = round(base_price, 2)  # 末点再次确认
+        n = min(len(real_prices), days)
+        sim = [round(p * scale, 2) for p in real_prices[-n:]]
+        while len(sim) < days:
+            prev = sim[0]
+            sim.insert(0, round(prev * (1 + random.gauss(0, max(volatility, 0.5) / 100)), 2))
+        sim = sim[-days:]
+    else:
+        # 无真实走势：以 base 为中枢小幅游走 + 均值回归，末点=base
+        price = base_price * (1 - random.uniform(0, 0.025))
+        sim = []
+        for _ in range(days):
+            price += random.gauss(0, volatility * base_price / 100)
+            price += (base_price - price) * 0.15   # 均值回归，防止漂太远
+            price = max(base_price * 0.88, min(base_price * 1.12, price))
+            sim.append(round(price, 2))
+    sim[-1] = round(base_price, 2)
 
-    # 3) 组装连续日期(末日=今天)
     history = []
     for i in range(days):
         d = today - timedelta(days=days - 1 - i)
