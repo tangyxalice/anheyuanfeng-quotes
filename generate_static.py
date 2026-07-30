@@ -15,6 +15,10 @@ from history_scraper import (
     scrape_commodity_histories, scrape_vane_history,
     build_real_series, flat_reference_series,
 )
+from multi_source_scraper import (
+    scrape_oilchem_phosphate, scrape_sci99_overview,
+    get_zhonglianjin_sulfur_static, aggregate_min_prices, build_source_breakdown,
+)
 
 BASE_PRICES = {
     "sulfur_solid": 9519, "sulfur_liquid": 7550, "sulfur_zhenjiang": 9200,
@@ -288,6 +292,31 @@ def main():
                 price_sources[key] = "本地缓存真实价(兜底)"
                 used_cache = True
 
+    # ── 多源交叉验证 + 取最低价(生意社/隆众/卓创/中联金) ──
+    source_breakdown = {}
+    try:
+        def _get_multi_text(url):
+            try:
+                import requests
+                r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 Chrome/120.0"}, timeout=15)
+                return r.text if (r.status_code == 200 and len(r.text) > 500) else None
+            except Exception:
+                return None
+        source_list = [{"source": "shengyishe", "prices": {k: float(v) for k, v in prices.items() if v}}]
+        oc = scrape_oilchem_phosphate(_get_multi_text)
+        if oc and oc.get("prices"): source_list.append(oc)
+        sci99 = scrape_sci99_overview(_get_multi_text)
+        if sci99 and sci99.get("prices"): source_list.append(sci99)
+        zlj = get_zhonglianjin_sulfur_static(ZLJ_SULFUR_QUOTES)
+        if zlj and zlj.get("prices"): source_list.append(zlj)
+        final_prices, _ = aggregate_min_prices(source_list, prices)
+        if "sulfur_zhenjiang" in final_prices:
+            final_prices["sulfur_solid"] = round(final_prices["sulfur_zhenjiang"] - 300, 2)
+        source_breakdown = build_source_breakdown(source_list, prices)
+        prices = final_prices
+    except Exception:
+        pass
+
     inventory = {}
     for port, base in PORT_INVENTORY_BASE.items():
         inventory[port] = round(base + random.gauss(0, 0.3), 2)
@@ -338,6 +367,7 @@ def main():
         "port_inventory": inventory,
         "total_inventory": total_inventory,
         "history": history,
+        "source_breakdown": source_breakdown,
         "zlj_sulfur": ZLJ_SULFUR_QUOTES,
         "source_info": {
             "sulfur": "生意社(100ppi.com) 实时爬取",

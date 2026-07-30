@@ -16,6 +16,10 @@ from history_scraper import (
     scrape_commodity_histories, scrape_vane_history,
     build_real_series, flat_reference_series,
 )
+from multi_source_scraper import (
+    scrape_oilchem_phosphate, scrape_sci99_overview,
+    get_zhonglianjin_sulfur_static, aggregate_min_prices, build_source_breakdown,
+)
 
 app = Flask(__name__)
 
@@ -517,6 +521,32 @@ def refresh_and_cache(force=False):
     try:
         prices, raw_results, real_histories = scrape_real_data()
 
+        # ── 多源交叉验证 + 取最低价为参考价(生意社/隆众/卓创/中联金) ──
+        source_list = [{"source": "shengyishe", "prices": {k: float(v) for k, v in prices.items() if v}}]
+        try:
+            oc = scrape_oilchem_phosphate(_get_text_for_history)
+            if oc and oc.get("prices"):
+                source_list.append(oc)
+        except Exception:
+            pass
+        try:
+            sci99 = scrape_sci99_overview(_get_text_for_history)
+            if sci99 and sci99.get("prices"):
+                source_list.append(sci99)
+        except Exception:
+            pass
+        try:
+            zlj = get_zhonglianjin_sulfur_static(ZLJ_SULFUR_QUOTES)
+            if zlj and zlj.get("prices"):
+                source_list.append(zlj)
+        except Exception:
+            pass
+        final_prices, _ = aggregate_min_prices(source_list, prices)
+        if "sulfur_zhenjiang" in final_prices:
+            final_prices["sulfur_solid"] = round(final_prices["sulfur_zhenjiang"] - 300, 2)
+        source_breakdown = build_source_breakdown(source_list, prices)
+        prices = final_prices
+
         # 添加当日微小波动（模拟盘中实时变化）
         for key in prices:
             jitter = random.gauss(0, abs(prices[key]) * 0.001)
@@ -539,6 +569,7 @@ def refresh_and_cache(force=False):
             "total_inventory": total_inventory,
             "history": history,
             "zlj_sulfur": ZLJ_SULFUR_QUOTES,
+            "source_breakdown": source_breakdown,
             "source_info": {
                 "sulfur": "生意社(100ppi.com) 实时爬取",
                 "map": "生意社/磷化工频道",
@@ -615,6 +646,22 @@ def get_cached_data():
 
     # 首次启动，立即爬取
     prices, raw_results, real_histories = scrape_real_data()
+    # ── 多源交叉验证 + 取最低价 ──
+    try:
+        source_list = [{"source": "shengyishe", "prices": {k: float(v) for k, v in prices.items() if v}}]
+        oc = scrape_oilchem_phosphate(_get_text_for_history)
+        if oc and oc.get("prices"): source_list.append(oc)
+        sci99 = scrape_sci99_overview(_get_text_for_history)
+        if sci99 and sci99.get("prices"): source_list.append(sci99)
+        zlj = get_zhonglianjin_sulfur_static(ZLJ_SULFUR_QUOTES)
+        if zlj and zlj.get("prices"): source_list.append(zlj)
+        final_prices, _ = aggregate_min_prices(source_list, prices)
+        if "sulfur_zhenjiang" in final_prices:
+            final_prices["sulfur_solid"] = round(final_prices["sulfur_zhenjiang"] - 300, 2)
+        source_breakdown = build_source_breakdown(source_list, prices)
+        prices = final_prices
+    except Exception:
+        source_breakdown = {}
     for key in prices:
         prices[key] = round(prices[key] + random.gauss(0, prices[key] * 0.001), 2)
 
@@ -630,6 +677,7 @@ def get_cached_data():
         "total_inventory": total_inventory,
         "history": _build_all_histories(prices, real_histories, days=30),
         "zlj_sulfur": ZLJ_SULFUR_QUOTES,
+        "source_breakdown": source_breakdown,
         "source_info": {
             "sulfur": "生意社(100ppi.com) 实时爬取",
             "map": "生意社/磷化工频道",

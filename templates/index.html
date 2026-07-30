@@ -328,6 +328,34 @@ body {
 .prov-dot.estimate { background: #95a5a6; }
 .prov-src { color: #8e9eb5; }
 
+/* ── 多源价格对比(各数据源 + 最低价标绿) ── */
+.source-row {
+  font-size: 11px;
+  color: #5a6b7d;
+  margin-top: 8px;
+  padding: 4px 8px;
+  background: #f8f9fa;
+  border-radius: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.source-price {
+  background: #fff;
+  border: 1px solid #e0e4e8;
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.source-price.source-min {
+  background: #d4edda;
+  border-color: #28a745;
+  color: #155724;
+  font-weight: 600;
+}
+
 /* ── 端口库存表 ── */
 .port-table {
   width: 100%;
@@ -1258,6 +1286,24 @@ function createBarChart(canvasId, labels, values, colors) {
   });
 }
 
+// ── 多源价格对比HTML(显示各数据源价 + 标绿最低价) ──
+const SRC_LABELS = { shengyishe: '生意社', oilchem: '隆众', zlj: '中联金', sci99: '卓创' };
+function getSourceComparisonHTML(priceKey, data) {
+  const sb = data.source_breakdown;
+  if (!sb || !sb[priceKey]) return '';
+  const info = sb[priceKey];
+  if (!info.sources || Object.keys(info.sources).length === 0) return '';
+  const parts = Object.entries(info.sources).map(([src, val]) => {
+    const label = SRC_LABELS[src] || src;
+    const display = val >= 10000 ? (val / 10000).toFixed(2) + '万' : val.toFixed(0);
+    const isMin = src === info.winner;
+    return `<span class="source-price${isMin ? ' source-min' : ''}">${label}: ${display}</span>`;
+  });
+  const minDisplay = info.min >= 10000 ? (info.min / 10000).toFixed(2) + '万' : info.min.toFixed(0);
+  const wLabel = SRC_LABELS[info.winner] || info.winner;
+  return `<div class="source-row">取最低: <strong>${minDisplay}</strong> (${wLabel}) · ${parts.join(' · ')}</div>`;
+}
+
 // ── 更新概览卡片 ──
 function updateOverviewCards(data) {
   const grid = document.getElementById('overviewGrid');
@@ -1273,7 +1319,7 @@ function updateOverviewCards(data) {
     return { pct: pct, dir: pct > 0.5 ? 'up' : pct < -0.5 ? 'down' : 'stable' };
   }
 
-  const items = [
+    const items = [
     {
       key: 'sulfur', cls: 'sulfur',
       title: '固体硫磺现货价(区间)',
@@ -1281,6 +1327,7 @@ function updateOverviewCards(data) {
       unit: '元/吨',
       range: solidSulfurRange(prices),
       change: calcChange('sulfur_solid'),
+      sourceKey: 'sulfur_zhenjiang',
     },
     {
       key: 'map', cls: 'map',
@@ -1288,6 +1335,7 @@ function updateOverviewCards(data) {
       price: prices.map_55,
       unit: '元/吨',
       change: calcChange('map_55'),
+      sourceKey: 'map_55',
     },
     {
       key: 'dap', cls: 'dap',
@@ -1295,6 +1343,7 @@ function updateOverviewCards(data) {
       price: prices.dap_64,
       unit: '元/吨',
       change: calcChange('dap_64'),
+      sourceKey: 'dap_64',
     },
     {
       key: 'lfp', cls: 'lfp',
@@ -1302,6 +1351,7 @@ function updateOverviewCards(data) {
       price: prices.lfp,
       unit: '元/吨',
       change: calcChange('lfp'),
+      sourceKey: 'lfp',
     },
     {
       key: 'yp', cls: 'yp',
@@ -1309,6 +1359,7 @@ function updateOverviewCards(data) {
       price: prices.yp,
       unit: '元/吨',
       change: calcChange('yp'),
+      sourceKey: 'yp',
     },
   ];
 
@@ -1331,6 +1382,7 @@ function updateOverviewCards(data) {
         <div class="${priceCls}">${priceDisplay}</div>
         <div class="card-unit">${unitText}</div>
         <div class="card-change ${changeCls}">30日涨跌: ${changeText}</div>
+        ${getSourceComparisonHTML(item.sourceKey, data)}
       </div>
     `;
   }).join('');
