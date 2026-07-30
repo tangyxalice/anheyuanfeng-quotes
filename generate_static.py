@@ -19,6 +19,7 @@ from multi_source_scraper import (
     scrape_oilchem_phosphate, scrape_sci99_overview,
     get_zhonglianjin_sulfur_static, aggregate_min_prices, build_source_breakdown,
 )
+from anti_scrape import safe_get, make_get_text, scrape_news_list_prices
 
 BASE_PRICES = {
     "sulfur_solid": 9519, "sulfur_liquid": 7550, "sulfur_zhenjiang": 9200,
@@ -58,71 +59,107 @@ ZLJ_SULFUR_QUOTES = {
 
 def scrape_real_data():
     try:
-        import requests
         from bs4 import BeautifulSoup
     except ImportError:
         print("缺少依赖，请安装: pip install requests beautifulsoup4 lxml")
-        return {}, {}, {}, {}
+        return {}, {}, {}, {}, {}
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "keep-alive",
+        "Referer": "https://www.100ppi.com/",
     }
 
     results = {}
     sources_status = {}
 
-    commodity_urls = {
-        "sulfur": "https://m1.100ppi.com/vane/427-%E7%A1%AB%E7%A3%BA",
-        "map": "https://m1.100ppi.com/vane/473-%E7%A3%B7%E9%85%B8%E4%B8%80%E9%93%B5",
-        "dap": "https://m1.100ppi.com/vane/426-%E7%A3%B7%E9%85%B8%E4%BA%8C%E9%93%B5",
-        "lfp_power": "https://m1.100ppi.com/vane/529-%E7%A3%B7%E9%85%B8%E9%93%81%E9%93%B1",
-        "yp": "https://m1.100ppi.com/vane/425-%E9%BB%84%E7%A3%B7",
-    }
+    # ── 方法0: 新闻列表页(反爬最弱, 成功率最高) ──
+    # chem.100ppi.com / map.100ppi.com / lfp.100ppi.com 的新闻列表页
+    # 提取当日参考价: "7月30日黄磷为27196.00"
+    print("  📰 尝试新闻列表页(反爬较弱)...")
+    news_prices = scrape_news_list_prices()
+    for key, info in news_prices.items():
+        price = info["latest_price"]
+        date_str = info["date"]
+        results[key + "_news"] = {"latest_price": price}
+        sources_status[key + "_news"] = f"新闻列表页({date_str}): {price}元/吨"
+        print(f"  ✅ {key}_news: {price}元/吨 ({date_str})")
 
-    for key, url in commodity_urls.items():
+    # ── 方法1: 生意社价格走势页(多镜像域名轮换, 抗反爬墙) ──
+    vane_paths = {
+        "sulfur": "/vane/427-%E7%A1%AB%E7%A3%BA",
+        "map": "/vane/473-%E7%A3%B7%E9%85%B8%E4%B8%80%E9%93%B5",
+        "dap": "/vane/426-%E7%A3%B7%E9%85%B8%E4%BA%8C%E9%93%B5",
+        "lfp_power": "/vane/529-%E7%A3%B7%E9%85%B8%E9%93%81%E9%93%B1",
+        "yp": "/vane/425-%E9%BB%84%E7%A3%B7",
+    }
+    vane_hosts = ["https://m1.100ppi.com", "https://www.100ppi.com", "https://100ppi.com"]
+
+    for key, path in vane_paths.items():
+        resp = None
+        for host in vane_hosts:
+            r = safe_get(host + path, headers)
+            if r and r.status_code == 200:
+                resp = r
+                break
+        if not resp:
+            sources_status[key] = "爬取失败(多镜像均被拦/超时)"
+            print(f"  ❌ {key}: 走势页被拦")
+            continue
         try:
-            resp = requests.get(url, headers=headers, timeout=15)
-            if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, "lxml")
-                text = soup.get_text()
+            soup = BeautifulSoup(resp.text, "lxml")
+            text = soup.get_text()
+            price_pattern = re.findall(r'(\d{2}-\d{2})\s+(\d+\.?\d*)\s*([\-\+]?\d+\.?\d*)%', text)
+            if not price_pattern:
                 price_pattern = re.findall(r'(\d{2}-\d{2})\s+(\d+\.?\d*)', text)
-                if price_pattern:
-                    latest_price = float(price_pattern[0][1])
-                    results[key] = {"latest_price": latest_price, "history": price_pattern[:15]}
-                    sources_status[key] = f"生意社走势页(实时): {latest_price}元/吨"
-                    print(f"  ✅ {key}: {latest_price}元/吨 ({len(price_pattern)}个数据点)")
-                else:
-                    sources_status[key] = "爬取失败(未匹配价格)"
-                    print(f"  ❌ {key}: 未匹配价格")
+            if price_pattern:
+                latest_price = float(price_pattern[0][1])
+                results[key] = {"latest_price": latest_price, "history": price_pattern[:15]}
+                sources_status[key] = f"生意社走势页(实时): {latest_price}元/吨"
+                print(f"  ✅ {key}: {latest_price}元/吨 ({len(price_pattern)}个数据点)")
+            else:
+                sources_status[key] = "爬取失败(未匹配价格)"
+                print(f"  ❌ {key}: 走势页未匹配价格")
         except Exception as e:
             sources_status[key] = f"爬取异常: {str(e)[:50]}"
             print(f"  ❌ {key}: {e}")
 
-    # 生意社每日参考价
+    # ── 方法2: 生意社每日参考价页面 ──
     today = datetime.now().strftime("%Y-%m-%d")
     yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    daily_map = {
+        "sulfur": r'硫磺\s*形态[：:]\s*颗粒硫磺\s*\d+\.?\d*\s*(\d+\.?\d*)',
+        "map": r'磷酸一铵\s*形态[：:][^\n]*?\d+\.?\d*\s*(\d+\.?\d*)',
+        "dap": r'磷酸二铵\s*形态[：:][^\n]*?\d+\.?\d*\s*(\d+\.?\d*)',
+        "lfp": r'磷酸铁\s*形态[：:][^\n]*?\d+\.?\d*\s*(\d+\.?\d*)',
+        "lfp_power": r'磷酸铁锂\s*形态[：:][^\n]*?\d+\.?\d*\s*(\d+\.?\d*)',
+        "yp": r'黄磷\s*形态[：:][^\n]*?\d+\.?\d*\s*(\d+\.?\d*)',
+    }
     for date_str in [today, yesterday]:
         try:
             url = f"https://www.100ppi.com/xhb/day-{date_str}.html"
-            resp = requests.get(url, headers=headers, timeout=15)
-            if resp.status_code == 200:
+            resp = safe_get(url, headers)
+            if resp and resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, "lxml")
                 text = soup.get_text()
-                sulfur_match = re.search(r'硫磺\s*形态[：:]\s*颗粒硫磺\s*(\d+\.?\d*)\s*(\d+\.?\d*)', text)
-                if sulfur_match and "sulfur" not in results:
-                    results["sulfur_daily"] = {"latest_price": float(sulfur_match.group(2))}
-                    sources_status["sulfur_daily"] = f"生意社日报({date_str})"
-                    print(f"  ✅ sulfur_daily: {float(sulfur_match.group(2))}元/吨")
-                break
+                for dk, pat in daily_map.items():
+                    m = re.search(pat, text)
+                    if m and (dk + "_daily") not in results:
+                        results[dk + "_daily"] = {"latest_price": float(m.group(1))}
+                        sources_status[dk + "_daily"] = f"生意社日报({date_str}): {float(m.group(1))}元/吨"
+                        print(f"  ✅ {dk}_daily: {float(m.group(1))}元/吨")
+                if "sulfur_daily" in results:
+                    break
         except Exception as e:
-            print(f"  ❌ sulfur_daily: {e}")
+            print(f"  ❌ daily: {e}")
 
-    # 生意社磷化工频道
+    # ── 方法3: 生意社磷化工频道 ──
     try:
         url = "https://100ppi.com/chanye/lhg.html"
-        resp = requests.get(url, headers=headers, timeout=15)
-        if resp.status_code == 200:
+        resp = safe_get(url, headers)
+        if resp and resp.status_code == 200:
             soup = BeautifulSoup(resp.text, "lxml")
             text = soup.get_text()
             map_match = re.search(r'磷酸一铵参考价为(\d+\.?\d*)', text)
@@ -144,75 +181,80 @@ def scrape_real_data():
     except Exception as e:
         print(f"  ❌ 磷化工频道: {e}")
 
-    # 合并最优数据
+    # ── 合并最优数据 (优先级: 走势 > 新闻列表 > 日报 > 频道) ──
     final_prices = {}
     price_sources = {}
 
+    # 镇江港颗粒硫磺
     if "sulfur" in results:
-        final_prices["sulfur_solid"] = results["sulfur"]["latest_price"]
-        price_sources["sulfur_solid"] = "生意社实时爬取"
+        final_prices["sulfur_zhenjiang"] = results["sulfur"]["latest_price"]
+        price_sources["sulfur_zhenjiang"] = "生意社走势页(实时)"
     elif "sulfur_daily" in results:
-        final_prices["sulfur_solid"] = results["sulfur_daily"]["latest_price"]
-        price_sources["sulfur_solid"] = "生意社日报爬取"
+        final_prices["sulfur_zhenjiang"] = results["sulfur_daily"]["latest_price"]
+        price_sources["sulfur_zhenjiang"] = "生意社日报"
     else:
-        final_prices["sulfur_solid"] = BASE_PRICES["sulfur_solid"]
-        price_sources["sulfur_solid"] = "基准参考价(回退)"
+        final_prices["sulfur_zhenjiang"] = BASE_PRICES["sulfur_zhenjiang"]
+        price_sources["sulfur_zhenjiang"] = "基准参考价(回退)"
 
-    final_prices["sulfur_zhenjiang"] = round(final_prices["sulfur_solid"] * 0.96, 2)
+    # 固体硫磺 = 港口价 -300, 取整到50
+    final_prices["sulfur_solid"] = round((final_prices["sulfur_zhenjiang"] - 300) / 50) * 50
+    price_sources["sulfur_solid"] = price_sources["sulfur_zhenjiang"]
     final_prices["sulfur_liquid"] = BASE_PRICES["sulfur_liquid"]
+    price_sources["sulfur_liquid"] = "基准参考价"
 
+    # MAP 55%: 走势 > 新闻列表 > 日报 > 频道
     if "map" in results:
-        final_prices["map_55"] = results["map"]["latest_price"]
-        price_sources["map_55"] = "生意社实时爬取"
+        final_prices["map_55"] = results["map"]["latest_price"]; price_sources["map_55"] = "生意社走势页(实时)"
+    elif "map_55_news" in results:
+        final_prices["map_55"] = results["map_55_news"]["latest_price"]; price_sources["map_55"] = "新闻列表页(基准价)"
+    elif "map_daily" in results:
+        final_prices["map_55"] = results["map_daily"]["latest_price"]; price_sources["map_55"] = "生意社日报"
     elif "map_channel" in results:
-        final_prices["map_55"] = results["map_channel"]["latest_price"]
-        price_sources["map_55"] = "磷化工频道爬取"
+        final_prices["map_55"] = results["map_channel"]["latest_price"]; price_sources["map_55"] = "磷化工频道"
     else:
-        final_prices["map_55"] = BASE_PRICES["map_55"]
-        price_sources["map_55"] = "基准参考价(回退)"
+        final_prices["map_55"] = BASE_PRICES["map_55"]; price_sources["map_55"] = "基准参考价(回退)"
     final_prices["map_73"] = BASE_PRICES["map_73"]
+    price_sources["map_73"] = "基准参考价"
 
+    # DAP 64%
     if "dap" in results:
-        final_prices["dap_64"] = results["dap"]["latest_price"]
-        price_sources["dap_64"] = "生意社实时爬取"
+        final_prices["dap_64"] = results["dap"]["latest_price"]; price_sources["dap_64"] = "生意社走势页(实时)"
+    elif "dap_daily" in results:
+        final_prices["dap_64"] = results["dap_daily"]["latest_price"]; price_sources["dap_64"] = "生意社日报"
     else:
-        final_prices["dap_64"] = BASE_PRICES["dap_64"]
-        price_sources["dap_64"] = "基准参考价(回退)"
+        final_prices["dap_64"] = BASE_PRICES["dap_64"]; price_sources["dap_64"] = "基准参考价(回退)"
     final_prices["dap_98"] = BASE_PRICES["dap_98"]
+    price_sources["dap_98"] = "基准参考价"
 
     final_prices["lfp"] = BASE_PRICES["lfp"]
     price_sources["lfp"] = "百川盈孚/Mysteel参考价"
 
+    # 磷酸铁锂: 走势 > 新闻列表 > 日报 > 频道
     if "lfp_power" in results:
-        final_prices["lfp_power"] = results["lfp_power"]["latest_price"]
-        price_sources["lfp_power"] = "生意社实时爬取"
+        final_prices["lfp_power"] = results["lfp_power"]["latest_price"]; price_sources["lfp_power"] = "生意社走势页(实时)"
+    elif "lfp_power_news" in results:
+        final_prices["lfp_power"] = results["lfp_power_news"]["latest_price"]; price_sources["lfp_power"] = "新闻列表页(基准价)"
+    elif "lfp_power_daily" in results:
+        final_prices["lfp_power"] = results["lfp_power_daily"]["latest_price"]; price_sources["lfp_power"] = "生意社日报"
     elif "lfp_channel" in results:
-        final_prices["lfp_power"] = results["lfp_channel"]["latest_price"]
-        price_sources["lfp_power"] = "磷化工频道爬取"
+        final_prices["lfp_power"] = results["lfp_channel"]["latest_price"]; price_sources["lfp_power"] = "磷化工频道"
     else:
-        final_prices["lfp_power"] = BASE_PRICES["lfp_power"]
-        price_sources["lfp_power"] = "基准参考价(回退)"
+        final_prices["lfp_power"] = BASE_PRICES["lfp_power"]; price_sources["lfp_power"] = "基准参考价(回退)"
 
-    # YP (黄磷)
+    # 黄磷: 走势 > 新闻列表 > 日报 > 频道
     if "yp" in results:
-        final_prices["yp"] = results["yp"]["latest_price"]
-        price_sources["yp"] = "生意社实时爬取"
+        final_prices["yp"] = results["yp"]["latest_price"]; price_sources["yp"] = "生意社走势页(实时)"
+    elif "yp_news" in results:
+        final_prices["yp"] = results["yp_news"]["latest_price"]; price_sources["yp"] = "新闻列表页(参考价)"
+    elif "yp_daily" in results:
+        final_prices["yp"] = results["yp_daily"]["latest_price"]; price_sources["yp"] = "生意社日报"
     elif "yp_channel" in results:
-        final_prices["yp"] = results["yp_channel"]["latest_price"]
-        price_sources["yp"] = "磷化工频道爬取"
+        final_prices["yp"] = results["yp_channel"]["latest_price"]; price_sources["yp"] = "磷化工频道"
     else:
-        final_prices["yp"] = BASE_PRICES["yp"]
-        price_sources["yp"] = "CBC金属网/生意社参考价"
+        final_prices["yp"] = BASE_PRICES["yp"]; price_sources["yp"] = "CBC金属网/生意社参考价"
 
     # ── 真实历史价格(走势曲线用, 替代随机游走) ──
-    def _get_text(url):
-        try:
-            r = requests.get(url, headers=headers, timeout=15)
-            if r.status_code == 200 and len(r.text) > 500:
-                return r.text
-        except Exception:
-            pass
-        return None
+    _get_text = make_get_text(headers)
 
     real_histories = {}
     try:
@@ -282,8 +324,11 @@ def main():
     except Exception:
         cache_prices, cache_time = {}, ""
     used_cache = False
+    # 判断是否为真实抓取: 含"走势/新闻/日报/频道/实时"即为真实, 含"回退/基准"则需兜底
+    _REAL_KEYWORDS = ("走势", "新闻", "日报", "频道", "实时", "CBC", "Mysteel", "百川")
     for key, src in list(price_sources.items()):
-        if "爬取" not in src:
+        is_real = any(kw in src for kw in _REAL_KEYWORDS)
+        if not is_real:
             if key in last_good:
                 prices[key] = last_good[key]
                 price_sources[key] = "上次真实价(兜底)"
@@ -295,13 +340,7 @@ def main():
     # ── 多源交叉验证 + 取最低价(生意社/隆众/卓创/中联金) ──
     source_breakdown = {}
     try:
-        def _get_multi_text(url):
-            try:
-                import requests
-                r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 Chrome/120.0"}, timeout=15)
-                return r.text if (r.status_code == 200 and len(r.text) > 500) else None
-            except Exception:
-                return None
+        _get_multi_text = make_get_text({"User-Agent": "Mozilla/5.0 Chrome/120.0"})
         source_list = [{"source": "shengyishe", "prices": {k: float(v) for k, v in prices.items() if v}}]
         oc = scrape_oilchem_phosphate(_get_multi_text)
         if oc and oc.get("prices"): source_list.append(oc)
@@ -352,7 +391,7 @@ def main():
     }
 
     # 持久化本次真实价，供下次兜底
-    last_good.update({k: v for k, v in prices.items() if "爬取" in price_sources.get(k, "")})
+    last_good.update({k: v for k, v in prices.items() if any(kw in price_sources.get(k, "") for kw in _REAL_KEYWORDS)})
     try:
         with open(os.path.join(os.path.dirname(__file__), "last_good_prices.json"), "w", encoding="utf-8") as _f:
             json.dump(last_good, _f, ensure_ascii=False, indent=2)
@@ -382,7 +421,7 @@ def main():
             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "sources": sources_status,
             "price_sources": price_sources,
-            "success_count": sum(1 for v in price_sources.values() if "爬取" in v),
+            "success_count": sum(1 for v in price_sources.values() if any(kw in v for kw in _REAL_KEYWORDS)),
         },
     }
 

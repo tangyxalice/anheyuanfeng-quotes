@@ -20,6 +20,7 @@ from multi_source_scraper import (
     scrape_oilchem_phosphate, scrape_sci99_overview,
     get_zhonglianjin_sulfur_static, aggregate_min_prices, build_source_breakdown,
 )
+from anti_scrape import scrape_news_list_prices
 
 app = Flask(__name__)
 
@@ -260,6 +261,16 @@ def scrape_real_data():
         except Exception as e:
             sources_status[key] = f"爬取异常: {str(e)[:50]}"
 
+    # ── 方法1.5: 新闻列表页(反爬最弱, 成功率高) ──
+    # chem.100ppi.com / map.100ppi.com / lfp.100ppi.com 的新闻列表页
+    # 提取当日参考价: "7月30日黄磷为27196.00"
+    news_prices = scrape_news_list_prices(_get_text_for_history)
+    for key, info in news_prices.items():
+        price = info["latest_price"]
+        date_str = info["date"]
+        results[key + "_news"] = {"latest_price": price}
+        sources_status[key + "_news"] = f"新闻列表页({date_str}): {price}元/吨"
+
     # ── 方法2: 从生意社每日参考价页面爬取(服务端渲染, 含全部品种) ──
     today = datetime.now().strftime("%Y-%m-%d")
     yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -352,9 +363,11 @@ def scrape_real_data():
     # 液体硫磺(无独立源, 沿用上次/基准)
     final["sulfur_liquid"] = last_good_prices.get("sulfur_liquid", BASE_PRICES["sulfur_liquid"]); real["sulfur_liquid"] = False
 
-    # MAP 55%: 走势 > 日报 > 频道
+    # MAP 55%: 走势 > 新闻列表 > 日报 > 频道
     if "map" in results:
         final["map_55"] = results["map"]["latest_price"]; real["map_55"] = True
+    elif "map_55_news" in results:
+        final["map_55"] = results["map_55_news"]["latest_price"]; real["map_55"] = True
     elif "map_daily" in results:
         final["map_55"] = results["map_daily"]["latest_price"]; real["map_55"] = True
     elif "map_channel" in results:
@@ -382,9 +395,11 @@ def scrape_real_data():
     else:
         final["lfp"] = last_good_prices.get("lfp", BASE_PRICES["lfp"]); real["lfp"] = False
 
-    # 磷酸铁锂: 走势 > 日报 > 频道(磷酸铁锂)
+    # 磷酸铁锂: 走势 > 新闻列表 > 日报 > 频道(磷酸铁锂)
     if "lfp_power" in results:
         final["lfp_power"] = results["lfp_power"]["latest_price"]; real["lfp_power"] = True
+    elif "lfp_power_news" in results:
+        final["lfp_power"] = results["lfp_power_news"]["latest_price"]; real["lfp_power"] = True
     elif "lfp_power_daily" in results:
         final["lfp_power"] = results["lfp_power_daily"]["latest_price"]; real["lfp_power"] = True
     elif "lfp_power_channel" in results:
@@ -392,9 +407,11 @@ def scrape_real_data():
     else:
         final["lfp_power"] = last_good_prices.get("lfp_power", BASE_PRICES["lfp_power"]); real["lfp_power"] = False
 
-    # 黄磷: 走势 > 日报 > 频道
+    # 黄磷: 走势 > 新闻列表 > 日报 > 频道
     if "yp" in results:
         final["yp"] = results["yp"]["latest_price"]; real["yp"] = True
+    elif "yp_news" in results:
+        final["yp"] = results["yp_news"]["latest_price"]; real["yp"] = True
     elif "yp_daily" in results:
         final["yp"] = results["yp_daily"]["latest_price"]; real["yp"] = True
     elif "yp_channel" in results:
