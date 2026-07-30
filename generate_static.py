@@ -11,6 +11,10 @@ import re
 import random
 import sys
 from datetime import datetime, timedelta
+from history_scraper import (
+    scrape_commodity_histories, scrape_vane_history,
+    build_real_series, flat_reference_series,
+)
 
 BASE_PRICES = {
     "sulfur_solid": 9519, "sulfur_liquid": 7550, "sulfur_zhenjiang": 9200,
@@ -196,48 +200,35 @@ def scrape_real_data():
         final_prices["yp"] = BASE_PRICES["yp"]
         price_sources["yp"] = "CBC金属网/生意社参考价"
 
-    return final_prices, results, sources_status, price_sources
+    # ── 真实历史价格(走势曲线用, 替代随机游走) ──
+    def _get_text(url):
+        try:
+            r = requests.get(url, headers=headers, timeout=15)
+            if r.status_code == 200 and len(r.text) > 500:
+                return r.text
+        except Exception:
+            pass
+        return None
 
+    real_histories = {}
+    try:
+        real_histories.update(scrape_commodity_histories(_get_text))
+    except Exception:
+        pass
+    try:
+        rh = scrape_vane_history(_get_text, 427, "硫磺")
+        if rh:
+            real_histories["sulfur"] = rh
+    except Exception:
+        pass
+    try:
+        rh = scrape_vane_history(_get_text, 426, "磷酸二铵")
+        if rh:
+            real_histories["dap"] = rh
+    except Exception:
+        pass
 
-def generate_history(base_price, days=30, volatility=0.03, trend=0.002):
-    """无真实走势时的回退：末点(今天)锚定当前价，保证图表末端与卡片价一致。"""
-    return generate_history_from_real(base_price, [], days, volatility, trend)
-
-
-def generate_history_from_real(base_price, real_history_list, days=30, volatility=0.02, trend=0.002):
-    """生成 days 天走势：最后一天(今天)价格恒等于当前价 base_price，与卡片价一致。
-    优先用真实走势做形状(缩放对齐)；无真实数据时以 base 为中枢小幅游走+均值回归，
-    整体平缓(±10%内)，避免离谱涨跌。"""
-    base_price = float(base_price)
-    today = datetime.now().date()
-    real_prices = [float(x[1]) for x in reversed(real_history_list)] if real_history_list else []
-
-    if len(real_prices) >= 3:
-        # 真实走势优先：缩放后作为形状，末点=base
-        ref = real_prices[-1] or base_price
-        scale = base_price / ref if ref else 1.0
-        n = min(len(real_prices), days)
-        sim = [round(p * scale, 2) for p in real_prices[-n:]]
-        while len(sim) < days:
-            prev = sim[0]
-            sim.insert(0, round(prev * (1 + random.gauss(0, max(volatility, 0.5) / 100)), 2))
-        sim = sim[-days:]
-    else:
-        # 无真实走势：以 base 为中枢小幅游走 + 均值回归，末点=base
-        price = base_price * (1 - random.uniform(0, 0.025))
-        sim = []
-        for _ in range(days):
-            price += random.gauss(0, volatility * base_price / 100)
-            price += (base_price - price) * 0.15   # 均值回归，防止漂太远
-            price = max(base_price * 0.88, min(base_price * 1.12, price))
-            sim.append(round(price, 2))
-    sim[-1] = round(base_price, 2)
-
-    history = []
-    for i in range(days):
-        d = today - timedelta(days=days - 1 - i)
-        history.append({"date": d.strftime("%Y-%m-%d"), "price": sim[i]})
-    return history
+    return final_prices, results, sources_status, price_sources, real_histories
 
 
 def generate_inventory_history(days=30):
@@ -263,12 +254,15 @@ def main():
     print("=" * 60)
 
     print("\n🔍 正在从生意社爬取真实数据...")
-    prices, raw_results, sources_status, price_sources = scrape_real_data()
+    prices, raw_results, sources_status, price_sources, real_histories = scrape_real_data()
 
     print(f"\n📊 最终价格:")
     for key, val in prices.items():
         src = price_sources.get(key, "未知")
         print(f"  {key}: {val}元/吨 ({src})")
+    print(f"\n📈 真实历史数据点:")
+    for k, v in (real_histories or {}).items():
+        print(f"  {k}: {len(v)} 个真实日价 ({min(v.keys())}~{max(v.keys())})" if v else f"  {k}: 无")
 
     # 防回退: 若某品种回退到基准价，依次用 上次真实价 / 本地缓存真实价 兜底
     try:
@@ -299,22 +293,33 @@ def main():
         inventory[port] = round(base + random.gauss(0, 0.3), 2)
     total_inventory = round(sum(inventory.values()), 2)
 
-    sulfur_real = raw_results.get("sulfur", {}).get("history", []) if "sulfur" in raw_results else []
-    map_real = raw_results.get("map", {}).get("history", []) if "map" in raw_results else []
-    dap_real = raw_results.get("dap", {}).get("history", []) if "dap" in raw_results else []
-    lfp_real = raw_results.get("lfp_power", {}).get("history", []) if "lfp_power" in raw_results else []
-    yp_real = raw_results.get("yp", {}).get("history", []) if "yp" in raw_results else []
+    # ── 用真实历史 + 当前价构建走势(彻底替代随机游走) ──
+    today = datetime.now().date()
+    rh = real_histories or {}
+
+    def _series(key, current_price):
+        if rh.get(key):
+            pts, _ = build_real_series(rh[key], 30, current_price, today)
+            return pts
+        return flat_reference_series(current_price, 30, today)[0]
+
+    zj_pts = _series("sulfur", prices["sulfur_zhenjiang"])
+    solid_pts = [{"date": p["date"], "price": round(p["price"] - 300, 2), "flag": p["flag"]} for p in zj_pts]
+    inv = generate_inventory_history(30)
+    for p in inv:
+        p["flag"] = "估算"
 
     history = {
-        "sulfur_solid": generate_history_from_real(prices["sulfur_solid"], sulfur_real, 30, 3, 0.015),
-        "sulfur_zhenjiang": generate_history_from_real(prices["sulfur_zhenjiang"], [], 30, 2.5, 0.012),
-        "map_55": generate_history_from_real(prices["map_55"], map_real, 30, 2, 0.008),
-        "map_73": generate_history_from_real(prices["map_73"], [], 30, 2.5, 0.01),
-        "dap_64": generate_history_from_real(prices["dap_64"], dap_real, 30, 1.5, 0.006),
-        "lfp": generate_history_from_real(prices["lfp"], [], 30, 2, 0.005),
-        "lfp_power": generate_history_from_real(prices["lfp_power"], lfp_real, 30, 1.5, 0.003),
-        "yp": generate_history_from_real(prices["yp"], yp_real, 30, 4, -0.01),
-        "port_inventory": generate_inventory_history(30),
+        "sulfur_zhenjiang": zj_pts,
+        "sulfur_solid": solid_pts,
+        "map_55": _series("map_55", prices["map_55"]),
+        "map_73": _series("map_73", prices["map_73"]),
+        "dap_64": _series("dap", prices["dap_64"]),
+        "dap_98": _series("dap_98", prices["dap_98"]),
+        "lfp": _series("lfp", prices["lfp"]),
+        "lfp_power": _series("lfp_power", prices["lfp_power"]),
+        "yp": _series("yp", prices["yp"]),
+        "port_inventory": inv,
     }
 
     # 持久化本次真实价，供下次兜底

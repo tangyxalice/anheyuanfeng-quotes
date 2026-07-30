@@ -12,6 +12,10 @@ import threading
 import traceback
 from datetime import datetime, timedelta
 from flask import Flask, jsonify, render_template
+from history_scraper import (
+    scrape_commodity_histories, scrape_vane_history,
+    build_real_series, flat_reference_series,
+)
 
 app = Flask(__name__)
 
@@ -177,6 +181,15 @@ def safe_get(url, headers=None, timeout=15, fresh=False):
 
 
 load_last_good()
+
+
+def _get_text_for_history(url):
+    """给 history_scraper 用的轻量取文本(只读 text, 失败返回 None)。"""
+    try:
+        r = safe_get(url, timeout=15)
+        return r.text if r else None
+    except Exception:
+        return None
 
 
 # ── 真实数据爬虫 ──
@@ -392,6 +405,25 @@ def scrape_real_data():
 
     success_count = sum(1 for v in real.values() if v)
 
+    # ── 真实历史价格(用于走势曲线, 彻底替代随机游走) ──
+    real_histories = {}
+    try:
+        real_histories.update(scrape_commodity_histories(_get_text_for_history))
+    except Exception:
+        pass
+    try:
+        rh = scrape_vane_history(_get_text_for_history, 427, "硫磺")
+        if rh:
+            real_histories["sulfur"] = rh
+    except Exception:
+        pass
+    try:
+        rh = scrape_vane_history(_get_text_for_history, 426, "磷酸二铵")
+        if rh:
+            real_histories["dap"] = rh
+    except Exception:
+        pass
+
     global last_scrape_status
     last_scrape_status = {
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -399,51 +431,56 @@ def scrape_real_data():
         "real_prices": real,
         "success_count": success_count,
         "raw_results_keys": list(results.keys()),
+        "history_counts": {k: len(v) for k, v in real_histories.items()},
     }
 
-    return final, results
+    return final, results, real_histories
 
 
-# ── 历史价格生成（当爬虫无法获取走势时使用模拟回退）──
-def generate_history(base_price, days=30, volatility=0.03, trend=0.002):
-    """无真实走势时的回退：末点(今天)锚定当前价，保证图表末端与卡片价一致。"""
-    return generate_history_from_real(base_price, [], days, volatility, trend)
-
-
-def generate_history_from_real(base_price, real_history_list, days=30, volatility=0.02, trend=0.002):
-    """生成 days 天走势：最后一天(今天)价格恒等于当前价 base_price，与卡片价一致。
-    优先用真实走势做形状(缩放对齐)；无真实数据时以 base 为中枢小幅游走+均值回归，
-    整体平缓(±10%内)，避免离谱涨跌。"""
-    base_price = float(base_price)
+# ── 走势构建: 用真实历史 + 当前价, 彻底替代随机游走 ──
+def _build_all_histories(prices, real_histories, days=30):
+    """有真实序列的品种: 真实点+插值; 无序列的: 当前参考价水平线 (flag='reference')。"""
     today = datetime.now().date()
-    real_prices = [float(x[1]) for x in reversed(real_history_list)] if real_history_list else []
+    rh = real_histories or {}
 
-    if len(real_prices) >= 3:
-        # 真实走势优先：缩放后作为形状，末点=base
-        ref = real_prices[-1] or base_price
-        scale = base_price / ref if ref else 1.0
-        n = min(len(real_prices), days)
-        sim = [round(p * scale, 2) for p in real_prices[-n:]]
-        while len(sim) < days:
-            prev = sim[0]
-            sim.insert(0, round(prev * (1 + random.gauss(0, max(volatility, 0.5) / 100)), 2))
-        sim = sim[-days:]
-    else:
-        # 无真实走势：以 base 为中枢小幅游走 + 均值回归，末点=base
-        price = base_price * (1 - random.uniform(0, 0.025))
-        sim = []
-        for _ in range(days):
-            price += random.gauss(0, volatility * base_price / 100)
-            price += (base_price - price) * 0.15   # 均值回归，防止漂太远
-            price = max(base_price * 0.88, min(base_price * 1.12, price))
-            sim.append(round(price, 2))
-    sim[-1] = round(base_price, 2)
+    def _series(key, current_price):
+        if rh.get(key):
+            pts, _ = build_real_series(rh[key], days, current_price, today)
+            return pts
+        return flat_reference_series(current_price, days, today)[0]
 
-    history = []
-    for i in range(days):
-        d = today - timedelta(days=days - 1 - i)
-        history.append({"date": d.strftime("%Y-%m-%d"), "price": sim[i]})
-    return history
+    zj_pts = _series("sulfur", prices["sulfur_zhenjiang"])
+    solid_pts = [{"date": p["date"], "price": round(p["price"] - 300, 2), "flag": p["flag"]} for p in zj_pts]
+    inv = generate_inventory_history(days)
+    for p in inv:
+        p["flag"] = "估算"
+
+    return {
+        "sulfur_zhenjiang": zj_pts,
+        "sulfur_solid": solid_pts,
+        "map_55": _series("map_55", prices["map_55"]),
+        "map_73": _series("map_73", prices["map_73"]),
+        "dap_64": _series("dap", prices["dap_64"]),
+        "dap_98": _series("dap_98", prices["dap_98"]),
+        "lfp": _series("lfp", prices["lfp"]),
+        "lfp_power": _series("lfp_power", prices["lfp_power"]),
+        "yp": _series("yp", prices["yp"]),
+        "port_inventory": inv,
+    }
+
+
+def _migrate_history(data):
+    """旧缓存无 flag, 补默认 flag='unknown' 以保证前端兼容。"""
+    if not isinstance(data, dict):
+        return data
+    h = data.get("history", {})
+    for k, pts in h.items():
+        if not isinstance(pts, list):
+            continue
+        for p in pts:
+            if isinstance(p, dict) and "flag" not in p:
+                p["flag"] = "unknown"
+    return data
 
 
 # ── 港口库存历史 ──
@@ -478,7 +515,7 @@ def refresh_and_cache(force=False):
         return get_cached_data()
 
     try:
-        prices, raw_results = scrape_real_data()
+        prices, raw_results, real_histories = scrape_real_data()
 
         # 添加当日微小波动（模拟盘中实时变化）
         for key in prices:
@@ -492,24 +529,8 @@ def refresh_and_cache(force=False):
             inventory[port] = round(base + jitter, 2)
         total_inventory = round(sum(inventory.values()), 2)
 
-        # 生成历史数据（优先使用爬虫获取的真实走势）
-        sulfur_real_history = raw_results.get("sulfur", {}).get("history", []) if "sulfur" in raw_results else []
-        map_real_history = raw_results.get("map", {}).get("history", []) if "map" in raw_results else []
-        dap_real_history = raw_results.get("dap", {}).get("history", []) if "dap" in raw_results else []
-        lfp_real_history = raw_results.get("lfp_power", {}).get("history", []) if "lfp_power" in raw_results else []
-        yp_real_history = raw_results.get("yp", {}).get("history", []) if "yp" in raw_results else []
-
-        history = {
-            "sulfur_solid": generate_history_from_real(prices["sulfur_solid"], sulfur_real_history, days=30, volatility=3, trend=0.015),
-            "sulfur_zhenjiang": generate_history_from_real(prices["sulfur_zhenjiang"], [], days=30, volatility=2.5, trend=0.012),
-            "map_55": generate_history_from_real(prices["map_55"], map_real_history, days=30, volatility=2, trend=0.008),
-            "map_73": generate_history_from_real(prices["map_73"], [], days=30, volatility=2.5, trend=0.01),
-            "dap_64": generate_history_from_real(prices["dap_64"], dap_real_history, days=30, volatility=1.5, trend=0.006),
-            "lfp": generate_history_from_real(prices["lfp"], [], days=30, volatility=2, trend=0.005),
-            "lfp_power": generate_history_from_real(prices["lfp_power"], lfp_real_history, days=30, volatility=1.5, trend=0.003),
-            "yp": generate_history_from_real(prices["yp"], yp_real_history, days=30, volatility=4, trend=-0.01),
-            "port_inventory": generate_inventory_history(days=30),
-        }
+        # 生成历史数据（用真实历史 + 当前价, 彻底替代随机游走）
+        history = _build_all_histories(prices, real_histories, days=30)
 
         data = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -544,12 +565,25 @@ def ensure_initial_cache():
     """启动即写一份初始缓存(来自兜底真实价)，避免首启瞬间 /api/data 空数据。"""
     if not os.path.exists(CACHE_FILE):
         try:
+            today = datetime.now().date()
+            history = {
+                k: flat_reference_series(last_good_prices.get(k, 0), 30, today)[0]
+                for k in ("sulfur_zhenjiang", "map_55", "map_73", "dap_64", "dap_98", "lfp", "lfp_power", "yp")
+            }
+            solid = [{"date": p["date"], "price": round(p["price"] - 300, 2), "flag": p["flag"]} for p in history["sulfur_zhenjiang"]]
+            history["sulfur_solid"] = solid
+            inv = []
+            for i in range(30):
+                d = today - timedelta(days=29 - i)
+                ports = {p: round(v, 2) for p, v in PORT_INVENTORY_BASE.items()}
+                inv.append({"date": d.strftime("%Y-%m-%d"), "total": round(sum(PORT_INVENTORY_BASE.values()), 2), "ports": ports, "flag": "估算"})
+            history["port_inventory"] = inv
             data = {
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "prices": dict(last_good_prices),
                 "port_inventory": dict(PORT_INVENTORY_BASE),
                 "total_inventory": round(sum(PORT_INVENTORY_BASE.values()), 2),
-                "history": {k: [] for k in ("sulfur_solid", "sulfur_zhenjiang", "map_55", "map_73", "dap_64", "lfp", "lfp_power", "yp", "port_inventory")},
+                "history": history,
                 "zlj_sulfur": ZLJ_SULFUR_QUOTES,
                 "source_info": {"sulfur": "生意社(100ppi.com)", "map": "磷化工频道", "dap": "生意社", "lfp": "百川盈孚/Mysteel", "yp": "生意社/CBC金属网", "inventory": "估算", "zlj": "中联金"},
                 "scrape_status": last_scrape_status,
@@ -577,10 +611,10 @@ def get_cached_data():
     with cache_lock:
         if os.path.exists(CACHE_FILE):
             with open(CACHE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                return _migrate_history(json.load(f))
 
     # 首次启动，立即爬取
-    prices, raw_results = scrape_real_data()
+    prices, raw_results, real_histories = scrape_real_data()
     for key in prices:
         prices[key] = round(prices[key] + random.gauss(0, prices[key] * 0.001), 2)
 
@@ -589,28 +623,12 @@ def get_cached_data():
         inventory[port] = round(base + random.gauss(0, 0.2), 2)
     total_inventory = round(sum(inventory.values()), 2)
 
-    sulfur_real_history = raw_results.get("sulfur", {}).get("history", []) if "sulfur" in raw_results else []
-    map_real_history = raw_results.get("map", {}).get("history", []) if "map" in raw_results else []
-    dap_real_history = raw_results.get("dap", {}).get("history", []) if "dap" in raw_results else []
-    lfp_real_history = raw_results.get("lfp_power", {}).get("history", []) if "lfp_power" in raw_results else []
-    yp_real_history = raw_results.get("yp", {}).get("history", []) if "yp" in raw_results else []
-
     data = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "prices": prices,
         "port_inventory": inventory,
         "total_inventory": total_inventory,
-        "history": {
-            "sulfur_solid": generate_history_from_real(prices["sulfur_solid"], sulfur_real_history, 30, 3, 0.015),
-            "sulfur_zhenjiang": generate_history_from_real(prices["sulfur_zhenjiang"], [], 30, 2.5, 0.012),
-            "map_55": generate_history_from_real(prices["map_55"], map_real_history, 30, 2, 0.008),
-            "map_73": generate_history_from_real(prices["map_73"], [], 30, 2.5, 0.01),
-            "dap_64": generate_history_from_real(prices["dap_64"], dap_real_history, 30, 1.5, 0.006),
-            "lfp": generate_history_from_real(prices["lfp"], [], 30, 2, 0.005),
-            "lfp_power": generate_history_from_real(prices["lfp_power"], lfp_real_history, 30, 1.5, 0.003),
-            "yp": generate_history_from_real(prices["yp"], yp_real_history, 30, 4, -0.01),
-            "port_inventory": generate_inventory_history(30),
-        },
+        "history": _build_all_histories(prices, real_histories, days=30),
         "zlj_sulfur": ZLJ_SULFUR_QUOTES,
         "source_info": {
             "sulfur": "生意社(100ppi.com) 实时爬取",

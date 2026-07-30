@@ -308,6 +308,26 @@ body {
   height: 280px;
 }
 
+/* ── 数据来源徽章(显示真实/插值/参考天数, 消除对随机模拟的疑虑) ── */
+.prov-badge {
+  font-size: 11px;
+  color: #5a6b7d;
+  margin-top: -6px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.prov-stat { display: inline-flex; align-items: center; gap: 4px; }
+.prov-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.prov-dot.real { background: #2ecc71; }
+.prov-dot.interp { background: #f39c12; opacity: 0.7; }
+.prov-dot.fallback { background: #95a5a6; }
+.prov-dot.reference { background: #3498db; opacity: 0.6; }
+.prov-dot.estimate { background: #95a5a6; }
+.prov-src { color: #8e9eb5; }
+
 /* ── 端口库存表 ── */
 .port-table {
   width: 100%;
@@ -918,13 +938,66 @@ function createGradient(ctx, colors) {
   return gradient;
 }
 
+// ── 数据来源徽章(消除对随机模拟的疑虑: 显示真实/插值/参考天数) ──
+function getProvBadge(historyData) {
+  if (!historyData || !historyData.length) return '';
+  const counts = {};
+  for (const p of historyData) counts[p.flag || 'unknown'] = (counts[p.flag || 'unknown'] || 0) + 1;
+  // 整条都是估算(港口库存等)
+  if (counts['估算'] === historyData.length) {
+    return `<div class="prov-badge"><span class="prov-stat"><span class="prov-dot estimate"></span>估算值</span><span class="prov-src">· 综合估算(可后续接入 Rawmex 真实库存)</span></div>`;
+  }
+  // 整条都是参考价(无真实序列)
+  if (counts.reference === historyData.length) {
+    return `<div class="prov-badge"><span class="prov-stat"><span class="prov-dot reference"></span>参考价(无历史序列)</span><span class="prov-src">· 当前价水平线</span></div>`;
+  }
+  const parts = [];
+  if (counts.real > 0) parts.push(`<span class="prov-stat"><span class="prov-dot real"></span>真实 ${counts.real}天</span>`);
+  if (counts.interp > 0) parts.push(`<span class="prov-stat"><span class="prov-dot interp"></span>插值 ${counts.interp}天</span>`);
+  if (counts.fallback > 0) parts.push(`<span class="prov-stat"><span class="prov-dot fallback"></span>前置 ${counts.fallback}天</span>`);
+  if (counts.reference > 0 && counts.real === 0) parts.push(`<span class="prov-stat"><span class="prov-dot reference"></span>参考 ${counts.reference}天</span>`);
+  const src = counts.real > 0 ? '· 数据源: 生意社(100ppi.com)基准价列表/走势页' : '· 当前参考价';
+  return `<div class="prov-badge">${parts.join('')}<span class="prov-src">${src}</span></div>`;
+}
+
+function setProvBadge(canvasId, historyData) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const card = canvas.closest('.chart-card');
+  if (!card) return;
+  // 移除旧徽章, 在 canvas 前插入新徽章
+  card.querySelectorAll(':scope > .prov-badge').forEach(el => el.remove());
+  const tmp = document.createElement('div');
+  tmp.innerHTML = getProvBadge(historyData);
+  const badge = tmp.firstElementChild;
+  if (badge) canvas.parentNode.insertBefore(badge, canvas);
+}
+
 // ── 更新折线图数据（平滑，不重建） ──
 function updateLineChart(canvasId, historyData) {
   if (charts[canvasId] && charts[canvasId].data) {
-    charts[canvasId].data.labels = historyData.map(d => d.date.slice(5));
-    charts[canvasId].data.datasets[0].data = historyData.map(d => d.price);
-    charts[canvasId].update('none'); // 'none' = 无动画静默更新
-    return charts[canvasId];
+    const pts = historyData.map(d => ({ ...d, flag: d.flag || 'unknown' }));
+    const chart = charts[canvasId];
+    chart.data.labels = pts.map(d => d.date.slice(5));
+    chart.data.datasets[0].data = pts.map(d => d.price);
+    chart.data.datasets[0].pointRadius = pts.map(d => d.flag === 'real' ? 2 : 0);
+    chart.data.datasets[0].segment = {
+      borderDash: ctx => {
+        const fi = pts[ctx.p0DataIndex]?.flag;
+        const fj = pts[ctx.p1DataIndex]?.flag;
+        return (fi === 'real' && fj === 'real') ? undefined : [4, 4];
+      },
+      borderColor: ctx => {
+        const fi = pts[ctx.p0DataIndex]?.flag;
+        const fj = pts[ctx.p1DataIndex]?.flag;
+        if (fi === 'reference' || fj === 'reference') return chart.data.datasets[0].borderColor + '99';
+        if (fi !== 'real' || fj !== 'real') return chart.data.datasets[0].borderColor + 'AA';
+        return chart.data.datasets[0].borderColor;
+      }
+    };
+    chart.update('none');
+    setProvBadge(canvasId, historyData);
+    return chart;
   }
   return null;
 }
@@ -941,28 +1014,45 @@ function createLineChart(canvasId, label, historyData, colorConfig, unit = '元/
   const ctx = canvas.getContext('2d');
 
   const gradient = createGradient(ctx, colorConfig.gradient);
+  const pts = historyData.map(d => ({ ...d, flag: d.flag || 'unknown' }));
+  const baseColor = colorConfig.main;
 
   charts[canvasId] = new Chart(ctx, {
     type: 'line',
     data: {
-      labels: historyData.map(d => d.date.slice(5)),
+      labels: pts.map(d => d.date.slice(5)),
       datasets: [{
         label: label,
-        data: historyData.map(d => d.price),
-        borderColor: colorConfig.main,
+        data: pts.map(d => d.price),
+        borderColor: baseColor,
         backgroundColor: gradient,
         borderWidth: 2.5,
-        pointRadius: 0,
+        pointRadius: pts.map(d => d.flag === 'real' ? 2 : 0),
+        pointBackgroundColor: baseColor,
         pointHoverRadius: 5,
-        pointHoverBackgroundColor: colorConfig.main,
+        pointHoverBackgroundColor: baseColor,
         fill: true,
         tension: 0.3,
+        segment: {
+          borderDash: ctx => {
+            const fi = pts[ctx.p0DataIndex]?.flag;
+            const fj = pts[ctx.p1DataIndex]?.flag;
+            return (fi === 'real' && fj === 'real') ? undefined : [4, 4];
+          },
+          borderColor: ctx => {
+            const fi = pts[ctx.p0DataIndex]?.flag;
+            const fj = pts[ctx.p1DataIndex]?.flag;
+            if (fi === 'reference' || fj === 'reference') return baseColor + '99';
+            if (fi !== 'real' || fj !== 'real') return baseColor + 'AA';
+            return baseColor;
+          }
+        }
       }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      animation: { duration: 400 }, // 仅首次创建有动画
+      animation: { duration: 400 },
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
@@ -974,24 +1064,22 @@ function createLineChart(canvasId, label, historyData, colorConfig, unit = '元/
           padding: 12,
           displayColors: false,
           callbacks: {
-            label: (ctx) => `${ctx.parsed.y.toFixed(0)} ${unit}`
+            label: (ctx) => {
+              const p = pts[ctx.dataIndex];
+              const flagLabel = ({real: '真实', interp: '插值', fallback: '前置保持', reference: '参考', unknown: '--'})[p.flag] || '';
+              return `${ctx.parsed.y.toFixed(0)} ${unit} · ${flagLabel}`;
+            }
           }
         }
       },
       scales: {
-        x: {
-          grid: { display: false },
-          ticks: { maxTicksLimit: 8 }
-        },
-        y: {
-          grid: { color: '#f0f4f8' },
-          ticks: {
-            callback: (v) => v >= 10000 ? (v/10000).toFixed(1) + '万' : v.toFixed(0)
-          }
-        }
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 8 } },
+        y: { grid: { color: '#f0f4f8' }, ticks: { callback: (v) => v >= 10000 ? (v/10000).toFixed(1) + '万' : v.toFixed(0) } }
       }
     }
   });
+
+  setProvBadge(canvasId, historyData);
   return charts[canvasId];
 }
 
@@ -1057,6 +1145,8 @@ function createInventoryChart(canvasId, historyData) {
       }
     }
   });
+
+  setProvBadge(canvasId, historyData);
 }
 
 // ── 更新多线对比图数据（平滑） ──
