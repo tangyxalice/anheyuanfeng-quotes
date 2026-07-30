@@ -347,7 +347,8 @@ def scrape_real_data():
         final["sulfur_zhenjiang"] = last_good_prices.get("sulfur_zhenjiang", BASE_PRICES["sulfur_zhenjiang"]); real["sulfur_zhenjiang"] = False
 
     # 固体硫磺现货价 = 港口价 -300(前端锚定, 后端给一致基准)
-    final["sulfur_solid"] = round(final["sulfur_zhenjiang"] - 300, 2); real["sulfur_solid"] = real["sulfur_zhenjiang"]
+    # 固体硫磺现货价 = 港口价 -300, 取整数(取整到50)
+    final["sulfur_solid"] = round((final["sulfur_zhenjiang"] - 300) / 50) * 50; real["sulfur_solid"] = real["sulfur_zhenjiang"]
     # 液体硫磺(无独立源, 沿用上次/基准)
     final["sulfur_liquid"] = last_good_prices.get("sulfur_liquid", BASE_PRICES["sulfur_liquid"]); real["sulfur_liquid"] = False
 
@@ -543,7 +544,7 @@ def refresh_and_cache(force=False):
             pass
         final_prices, _ = aggregate_min_prices(source_list, prices)
         if "sulfur_zhenjiang" in final_prices:
-            final_prices["sulfur_solid"] = round(final_prices["sulfur_zhenjiang"] - 300, 2)
+            final_prices["sulfur_solid"] = round((final_prices["sulfur_zhenjiang"] - 300) / 50) * 50
         source_breakdown = build_source_breakdown(source_list, prices)
         prices = final_prices
 
@@ -657,7 +658,7 @@ def get_cached_data():
         if zlj and zlj.get("prices"): source_list.append(zlj)
         final_prices, _ = aggregate_min_prices(source_list, prices)
         if "sulfur_zhenjiang" in final_prices:
-            final_prices["sulfur_solid"] = round(final_prices["sulfur_zhenjiang"] - 300, 2)
+            final_prices["sulfur_solid"] = round((final_prices["sulfur_zhenjiang"] - 300) / 50) * 50
         source_breakdown = build_source_breakdown(source_list, prices)
         prices = final_prices
     except Exception:

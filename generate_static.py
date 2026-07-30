@@ -311,7 +311,7 @@ def main():
         if zlj and zlj.get("prices"): source_list.append(zlj)
         final_prices, _ = aggregate_min_prices(source_list, prices)
         if "sulfur_zhenjiang" in final_prices:
-            final_prices["sulfur_solid"] = round(final_prices["sulfur_zhenjiang"] - 300, 2)
+            final_prices["sulfur_solid"] = round((final_prices["sulfur_zhenjiang"] - 300) / 50) * 50
         source_breakdown = build_source_breakdown(source_list, prices)
         prices = final_prices
     except Exception:

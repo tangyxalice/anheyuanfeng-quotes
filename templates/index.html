@@ -1589,11 +1589,13 @@ function calcChangeRate(historyData) {
   return ((last - first) / first * 100);
 }
 
-// ── 硫磺现货锚定(以镇江港颗粒硫磺为参考，区间展示) ──
+// ── 硫磺现货锚定(以镇江港颗粒硫磺为参考，区间展示，取整到100) ──
 function solidSulfurRange(prices) {
   const port = prices.sulfur_zhenjiang;
   if (!port) return [0, 0];
-  return [Math.round(port - 400), Math.round(port - 200)];
+  const lo = Math.round((port - 400) / 100) * 100;
+  const hi = Math.round((port - 200) / 100) * 100;
+  return [lo, hi];
 }
 
 // ── 懒加载：仅渲染当前面板，其余面板首次切换时再渲染 ──
