@@ -406,58 +406,42 @@ def scrape_real_data():
 
 # ── 历史价格生成（当爬虫无法获取走势时使用模拟回退）──
 def generate_history(base_price, days=30, volatility=0.03, trend=0.002):
-    history = []
-    price = base_price * (1 - trend * days)
-    for i in range(days):
-        daily_change = random.gauss(0, volatility * base_price / 100)
-        trend_component = trend * base_price / 100
-        price += daily_change + trend_component
-        price = max(base_price * 0.7, min(base_price * 1.5, price))
-        date = (datetime.now() - timedelta(days=days - i)).strftime("%Y-%m-%d")
-        history.append({"date": date, "price": round(price, 2)})
-    return history
+    """无真实走势时的回退：末点(今天)锚定当前价，保证图表末端与卡片价一致。"""
+    return generate_history_from_real(base_price, [], days, volatility, trend)
 
 
 def generate_history_from_real(base_price, real_history_list, days=30, volatility=0.02, trend=0.002):
-    """将爬虫获取的真实走势数据与模拟数据拼接"""
+    """生成 days 天走势：最后一天(今天)价格恒等于当前价 base_price，确保与卡片价一致。
+    优先用真实走势做形状；无真实数据时生成平滑随机游走，末点锚定 base_price。"""
+    base_price = float(base_price)
+    today = datetime.now().date()
+
+    # 1) 生成以 base_price 收尾的模拟基线(末点=当前价)
+    sim = []
+    price = base_price * (1 - trend * days)
+    for _ in range(days):
+        price += random.gauss(0, volatility * base_price / 100) + trend * base_price / 100
+        price = max(base_price * 0.6, min(base_price * 1.6, price))
+        sim.append(round(price, 2))
+    sim[-1] = round(base_price, 2)
+
+    # 2) 若有真实走势，覆盖最近若干天(末点保留 base_price)；按量级缩放避免断层
+    real_prices = [float(x[1]) for x in reversed(real_history_list)] if real_history_list else []
+    n_real = min(len(real_prices), max(0, days - 1))
+    if n_real > 0:
+        ref = real_prices[-1] or base_price
+        scale = base_price / ref if ref else 1.0
+        for j in range(n_real):
+            idx = days - 1 - (n_real - j)  # 覆盖 days-n_real .. days-2
+            if idx >= 0:
+                sim[idx] = round(real_prices[j] * scale, 2)
+    sim[-1] = round(base_price, 2)  # 末点再次确认
+
+    # 3) 组装连续日期(末日=今天)
     history = []
-
-    # 如果有真实走势数据，优先使用
-    if real_history_list:
-        real_days = len(real_history_list)
-        # 真实数据倒序（从近到远），需要翻转成从远到近
-        real_data = list(reversed(real_history_list))
-        year = datetime.now().year
-        for item in real_data:
-            date_str = item[0]  # 格式: "07-23"
-            full_date = f"{year}-{date_str}"
-            price = float(item[1])
-            history.append({"date": full_date, "price": price})
-
-        # 剩余天数用模拟填充
-        remaining = days - real_days
-        if remaining > 0:
-            first_real_price = history[0]["price"] if history else base_price
-            sim_start = first_real_price * (1 - trend * remaining)
-            price = sim_start
-            start_date = datetime.now() - timedelta(days=days)
-            for i in range(remaining):
-                daily_change = random.gauss(0, volatility * base_price / 100)
-                trend_component = trend * base_price / 100
-                price += daily_change + trend_component
-                price = max(base_price * 0.7, min(base_price * 1.5, price))
-                date = (start_date + timedelta(days=i)).strftime("%Y-%m-%d")
-                history.append({"date": date, "price": round(price, 2)})
-
-        # 确保按日期排序
-        history.sort(key=lambda x: x["date"])
-
-        # 如果真实数据导致history超出days，截断
-        if len(history) > days:
-            history = history[-days:]
-    else:
-        history = generate_history(base_price, days, volatility, trend)
-
+    for i in range(days):
+        d = today - timedelta(days=days - 1 - i)
+        history.append({"date": d.strftime("%Y-%m-%d"), "price": sim[i]})
     return history
 
 
