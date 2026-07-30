@@ -109,6 +109,15 @@ body {
   color: #8e9eb5;
 }
 
+.freshness-badge {
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid #888;
+  border-radius: 12px;
+  color: #888;
+  white-space: nowrap;
+}
+
 .refresh-btn {
   background: rgba(255,255,255,0.1);
   border: 1px solid rgba(255,255,255,0.2);
@@ -572,6 +581,7 @@ body {
       <span id="sourceLabel">数据获取中...</span>
     </div>
     <div class="update-time" id="updateTime">--</div>
+    <div class="freshness-badge" id="freshnessBadge">--</div>
     <button class="refresh-btn" onclick="refreshData()">🔄 手动刷新</button>
   </div>
 </header>
@@ -1556,8 +1566,23 @@ function renderPanel(panel, data) {
 function renderAll(data) {
   currentData = data;
 
-  // 更新时间
+  // 更新时间 + 数据新鲜度提示
   document.getElementById('updateTime').textContent = '更新于 ' + data.timestamp;
+  try {
+    const ts = new Date((data.timestamp || '').replace(/-/g, '/'));
+    const now = new Date();
+    const diffH = (now - ts) / 3600000;
+    const badge = document.getElementById('freshnessBadge');
+    let txt, color;
+    if (isNaN(diffH)) { txt = '时间未知'; color = '#888'; }
+    else if (diffH < 1) { txt = '数据新鲜 · ' + Math.round(diffH * 60) + '分钟前'; color = '#27ae60'; }
+    else if (diffH < 6) { txt = '数据较新 · ' + Math.round(diffH) + '小时前'; color = '#27ae60'; }
+    else if (diffH < 24) { txt = '数据偏旧 · ' + Math.round(diffH) + '小时前'; color = '#e67e22'; }
+    else { txt = '数据已过期 · ' + Math.round(diffH / 24) + '天前'; color = '#e74c3c'; }
+    badge.textContent = txt;
+    badge.style.color = color;
+    badge.style.borderColor = color;
+  } catch (e) {}
 
   // 一号锚定：固体硫磺现货价以镇江港颗粒硫磺为参考，下浮200-400(中点-300)，区间展示
   if (!data.__sulfurAnchored && data.prices.sulfur_zhenjiang) {

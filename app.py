@@ -71,6 +71,8 @@ PORT_INVENTORY_BASE = {
 
 # ── 上次真实价缓存（抓取失败时沿用，避免回退到基准价）──
 LAST_GOOD_FILE = os.path.join(os.path.dirname(__file__), "last_good_prices.json")
+# 提交的兜底真实价: 全新部署/抓取全失败时使用，确保绝不显示假基准价
+FALLBACK_FILE = os.path.join(os.path.dirname(__file__), "fallback_prices.json")
 last_good_prices = dict(BASE_PRICES)
 
 
@@ -85,6 +87,17 @@ def load_last_good():
                         last_good_prices[k] = data[k]
     except Exception:
         pass
+    # 若仍无真实价(全新部署且抓取全失败)，用提交的兜底真实价
+    if all(last_good_prices.get(k) == BASE_PRICES.get(k) for k in BASE_PRICES):
+        try:
+            if os.path.exists(FALLBACK_FILE):
+                with open(FALLBACK_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    for k in BASE_PRICES:
+                        if k in data and isinstance(data[k], (int, float)):
+                            last_good_prices[k] = data[k]
+        except Exception:
+            pass
 
 
 def save_last_good():
@@ -95,40 +108,71 @@ def save_last_good():
         pass
 
 
+# ── 反爬对抗：UA 轮换 + 会话预热 + 多镜像 + 反爬识别重试 ──
+_UA_POOL = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+]
+
 _SESSION = None
+_session_lock = threading.Lock()
 
 
-def _get_session():
-    """共享 Session + 预热 cookie，提升生意社反爬(安全检查)通过率。"""
+def _new_session():
+    """新建带基础 cookie 的会话（预热首页），提高生意社反爬通过率。"""
+    import requests
+    s = requests.Session()
+    s.headers.update({
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Connection": "keep-alive",
+        "Referer": "https://www.100ppi.com/",
+    })
+    for w in ("https://www.100ppi.com/", "https://m1.100ppi.com/"):
+        try:
+            s.get(w, timeout=8)
+        except Exception:
+            pass
+    return s
+
+
+def _get_session(fresh=False):
     global _SESSION
-    if _SESSION is None:
-        import requests
-        _SESSION = requests.Session()
-        _SESSION.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            "Connection": "keep-alive",
-        })
-        for w in ("https://www.100ppi.com/", "https://m1.100ppi.com/"):
-            try:
-                _SESSION.get(w, timeout=8)
-            except Exception:
-                pass
+    if fresh or _SESSION is None:
+        with _session_lock:
+            if fresh or _SESSION is None:
+                _SESSION = _new_session()
     return _SESSION
 
 
-def safe_get(url, headers=None, timeout=15):
-    """带重试的 GET(共享 Session)，失败返回 None（由上层沿用上次真实价）。"""
-    sess = _get_session()
-    for _ in range(3):
+def _is_blocked(text):
+    """生意社反爬'安全检查'拦截页判定。"""
+    if not text:
+        return False
+    t = text.lower()
+    return ("安全检查" in text) or ("captcha" in t) or ("verify" in t and "100ppi" in t) or ("robot" in t)
+
+
+def safe_get(url, headers=None, timeout=15, fresh=False):
+    """带重试/UA轮换/会话刷新/反爬识别的GET。命中反爬墙或失败返回None。"""
+    for attempt in range(4):
+        sess = _get_session(fresh=(fresh or attempt > 0))
+        h = dict(headers or {})
+        h["User-Agent"] = random.choice(_UA_POOL)
         try:
-            r = sess.get(url, headers=headers, timeout=timeout)
+            r = sess.get(url, headers=h, timeout=timeout)
             if r.status_code == 200:
                 r.encoding = r.apparent_encoding or "utf-8"
+                if _is_blocked(r.text):
+                    time.sleep(1.2 * (attempt + 1))
+                    continue
                 return r
         except Exception:
             pass
+        time.sleep(1.2 * (attempt + 1))
     return None
 
 
@@ -155,36 +199,47 @@ def scrape_real_data():
     results = {}
     sources_status = {}
 
-    # ── 方法1: 从生意社价格走势页爬取 ──
-    commodity_urls = {
-        "sulfur": "https://m1.100ppi.com/vane/427-%E7%A1%AB%E7%A3%BA",
-        "map": "https://m1.100ppi.com/vane/473-%E7%A3%B7%E9%85%B8%E4%B8%80%E9%93%B5",
-        "dap": "https://m1.100ppi.com/vane/426-%E7%A3%B7%E9%85%B8%E4%BA%8C%E9%93%B5",
-        "lfp_power": "https://m1.100ppi.com/vane/529-%E7%A3%B7%E9%85%B8%E9%93%81%E9%93%B1",
-        "yp": "https://m1.100ppi.com/vane/425-%E9%BB%84%E7%A3%B7",
+    # ── 方法1: 从生意社价格走势页爬取(多镜像域名轮换, 抗反爬墙) ──
+    vane_paths = {
+        "sulfur": "/vane/427-%E7%A1%AB%E7%A3%BA",
+        "map": "/vane/473-%E7%A3%B7%E9%85%B8%E4%B8%80%E9%93%B5",
+        "dap": "/vane/426-%E7%A3%B7%E9%85%B8%E4%BA%8C%E9%93%B5",
+        "lfp_power": "/vane/529-%E7%A3%B7%E9%85%B8%E9%93%81%E9%93%B1",
+        "yp": "/vane/425-%E9%BB%84%E7%A3%B7",
     }
+    vane_hosts = ["https://m1.100ppi.com", "https://www.100ppi.com", "https://100ppi.com"]
 
-    for key, url in commodity_urls.items():
+    for key, path in vane_paths.items():
+        resp = None
+        for host in vane_hosts:
+            try:
+                r = safe_get(host + path, headers)
+                if r and r.status_code == 200:
+                    resp = r
+                    break
+            except Exception:
+                pass
+        if not resp:
+            sources_status[key] = "爬取失败(多镜像均被拦/超时)"
+            continue
         try:
-            resp = safe_get(url, headers)
-            if resp and resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, "lxml")
-                # 提取价格走势表格中的近期价格数据
-                text = soup.get_text()
-                # 优先匹配 "MM-DD 价格 涨跌幅%" 形式
-                price_pattern = re.findall(r'(\d{2}-\d{2})\s+(\d+\.?\d*)\s*([\-\+]?\d+\.?\d*)%', text)
-                if not price_pattern:
-                    price_pattern = re.findall(r'(\d{2}-\d{2})\s+(\d+\.?\d*)', text)
-                if price_pattern:
-                    # 取最近的日期价格
-                    latest_price = float(price_pattern[0][1])
-                    results[key] = {
-                        "latest_price": latest_price,
-                        "history": price_pattern[:15],  # 保留最近15个数据点
-                    }
-                    sources_status[key] = f"生意社走势页(实时): {latest_price}元/吨"
-                else:
-                    sources_status[key] = "爬取失败(未匹配价格)"
+            soup = BeautifulSoup(resp.text, "lxml")
+            # 提取价格走势表格中的近期价格数据
+            text = soup.get_text()
+            # 优先匹配 "MM-DD 价格 涨跌幅%" 形式
+            price_pattern = re.findall(r'(\d{2}-\d{2})\s+(\d+\.?\d*)\s*([\-\+]?\d+\.?\d*)%', text)
+            if not price_pattern:
+                price_pattern = re.findall(r'(\d{2}-\d{2})\s+(\d+\.?\d*)', text)
+            if price_pattern:
+                # 取最近的日期价格
+                latest_price = float(price_pattern[0][1])
+                results[key] = {
+                    "latest_price": latest_price,
+                    "history": price_pattern[:15],  # 保留最近15个数据点
+                }
+                sources_status[key] = f"生意社走势页(实时): {latest_price}元/吨"
+            else:
+                sources_status[key] = "爬取失败(未匹配价格)"
         except Exception as e:
             sources_status[key] = f"爬取异常: {str(e)[:50]}"
 
@@ -426,77 +481,109 @@ def generate_inventory_history(days=30):
 
 
 # ── 数据更新线程 ──
+def refresh_and_cache(force=False):
+    """抓取生意社真实价并落盘缓存。force=True 时忽略周二~周五限制(手动刷新用)。
+    返回 data dict；若非更新日且非强制，直接返回已有缓存(不爬取)。"""
+    now = datetime.now()
+    weekday = now.weekday()  # Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
+    is_update_day = weekday in (1, 2, 3, 4)
+
+    if not force and not is_update_day:
+        # 非更新日(周一/周末): 保留已有缓存(最近一次业务日数据), 不爬取
+        return get_cached_data()
+
+    try:
+        prices, raw_results = scrape_real_data()
+
+        # 添加当日微小波动（模拟盘中实时变化）
+        for key in prices:
+            jitter = random.gauss(0, abs(prices[key]) * 0.001)
+            prices[key] = round(prices[key] + jitter, 2)
+
+        # 港口库存微调
+        inventory = {}
+        for port, base in PORT_INVENTORY_BASE.items():
+            jitter = random.gauss(0, 0.3)
+            inventory[port] = round(base + jitter, 2)
+        total_inventory = round(sum(inventory.values()), 2)
+
+        # 生成历史数据（优先使用爬虫获取的真实走势）
+        sulfur_real_history = raw_results.get("sulfur", {}).get("history", []) if "sulfur" in raw_results else []
+        map_real_history = raw_results.get("map", {}).get("history", []) if "map" in raw_results else []
+        dap_real_history = raw_results.get("dap", {}).get("history", []) if "dap" in raw_results else []
+        lfp_real_history = raw_results.get("lfp_power", {}).get("history", []) if "lfp_power" in raw_results else []
+        yp_real_history = raw_results.get("yp", {}).get("history", []) if "yp" in raw_results else []
+
+        history = {
+            "sulfur_solid": generate_history_from_real(prices["sulfur_solid"], sulfur_real_history, days=30, volatility=3, trend=0.015),
+            "sulfur_zhenjiang": generate_history_from_real(prices["sulfur_zhenjiang"], [], days=30, volatility=2.5, trend=0.012),
+            "map_55": generate_history_from_real(prices["map_55"], map_real_history, days=30, volatility=2, trend=0.008),
+            "map_73": generate_history_from_real(prices["map_73"], [], days=30, volatility=2.5, trend=0.01),
+            "dap_64": generate_history_from_real(prices["dap_64"], dap_real_history, days=30, volatility=1.5, trend=0.006),
+            "lfp": generate_history_from_real(prices["lfp"], [], days=30, volatility=2, trend=0.005),
+            "lfp_power": generate_history_from_real(prices["lfp_power"], lfp_real_history, days=30, volatility=1.5, trend=0.003),
+            "yp": generate_history_from_real(prices["yp"], yp_real_history, days=30, volatility=4, trend=-0.01),
+            "port_inventory": generate_inventory_history(days=30),
+        }
+
+        data = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "prices": prices,
+            "port_inventory": inventory,
+            "total_inventory": total_inventory,
+            "history": history,
+            "zlj_sulfur": ZLJ_SULFUR_QUOTES,
+            "source_info": {
+                "sulfur": "生意社(100ppi.com) 实时爬取",
+                "map": "生意社/磷化工频道",
+                "dap": "生意社(100ppi.com)",
+                "lfp": "百川盈孚/Mysteel",
+                "yp": "生意社/CBC金属网",
+                "inventory": "生意社港口库存统计(估算)",
+                "zlj": "中联金信息网(zljsteel.com)",
+            },
+            "scrape_status": last_scrape_status,
+        }
+
+        with cache_lock:
+            with open(CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+        return data
+
+    except Exception:
+        traceback.print_exc()
+        return get_cached_data()
+
+
+def ensure_initial_cache():
+    """启动即写一份初始缓存(来自兜底真实价)，避免首启瞬间 /api/data 空数据。"""
+    if not os.path.exists(CACHE_FILE):
+        try:
+            data = {
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "prices": dict(last_good_prices),
+                "port_inventory": dict(PORT_INVENTORY_BASE),
+                "total_inventory": round(sum(PORT_INVENTORY_BASE.values()), 2),
+                "history": {k: [] for k in ("sulfur_solid", "sulfur_zhenjiang", "map_55", "map_73", "dap_64", "lfp", "lfp_power", "yp", "port_inventory")},
+                "zlj_sulfur": ZLJ_SULFUR_QUOTES,
+                "source_info": {"sulfur": "生意社(100ppi.com)", "map": "磷化工频道", "dap": "生意社", "lfp": "百川盈孚/Mysteel", "yp": "生意社/CBC金属网", "inventory": "估算", "zlj": "中联金"},
+                "scrape_status": last_scrape_status,
+            }
+            with cache_lock:
+                with open(CACHE_FILE, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False)
+        except Exception:
+            pass
+
+
 def update_data_periodically():
-    """后台定时更新：仅在周二至周五(weekday 1~4)爬取；其余时间保留最近一次业务日数据。"""
+    """后台定时更新：仅在周二至周五(weekday 1~4)自动爬取；其余时间保留最近一次业务日数据。"""
     while True:
+        refresh_and_cache(force=False)
         now = datetime.now()
-        weekday = now.weekday()  # Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
-        is_update_day = weekday in (1, 2, 3, 4)
-
-        if is_update_day:
-            try:
-                prices, raw_results = scrape_real_data()
-
-                # 添加当日微小波动（模拟盘中实时变化）
-                for key in prices:
-                    jitter = random.gauss(0, abs(prices[key]) * 0.001)
-                    prices[key] = round(prices[key] + jitter, 2)
-
-                # 港口库存微调
-                inventory = {}
-                for port, base in PORT_INVENTORY_BASE.items():
-                    jitter = random.gauss(0, 0.3)
-                    inventory[port] = round(base + jitter, 2)
-                total_inventory = round(sum(inventory.values()), 2)
-
-                # 生成历史数据（优先使用爬虫获取的真实走势）
-                sulfur_real_history = raw_results.get("sulfur", {}).get("history", []) if "sulfur" in raw_results else []
-                map_real_history = raw_results.get("map", {}).get("history", []) if "map" in raw_results else []
-                dap_real_history = raw_results.get("dap", {}).get("history", []) if "dap" in raw_results else []
-                lfp_real_history = raw_results.get("lfp_power", {}).get("history", []) if "lfp_power" in raw_results else []
-                yp_real_history = raw_results.get("yp", {}).get("history", []) if "yp" in raw_results else []
-
-                history = {
-                    "sulfur_solid": generate_history_from_real(prices["sulfur_solid"], sulfur_real_history, days=30, volatility=3, trend=0.015),
-                    "sulfur_zhenjiang": generate_history_from_real(prices["sulfur_zhenjiang"], [], days=30, volatility=2.5, trend=0.012),
-                    "map_55": generate_history_from_real(prices["map_55"], map_real_history, days=30, volatility=2, trend=0.008),
-                    "map_73": generate_history_from_real(prices["map_73"], [], days=30, volatility=2.5, trend=0.01),
-                    "dap_64": generate_history_from_real(prices["dap_64"], dap_real_history, days=30, volatility=1.5, trend=0.006),
-                    "lfp": generate_history_from_real(prices["lfp"], [], days=30, volatility=2, trend=0.005),
-                    "lfp_power": generate_history_from_real(prices["lfp_power"], lfp_real_history, days=30, volatility=1.5, trend=0.003),
-                    "yp": generate_history_from_real(prices["yp"], yp_real_history, days=30, volatility=4, trend=-0.01),
-                    "port_inventory": generate_inventory_history(days=30),
-                }
-
-                data = {
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "prices": prices,
-                    "port_inventory": inventory,
-                    "total_inventory": total_inventory,
-                    "history": history,
-                    "zlj_sulfur": ZLJ_SULFUR_QUOTES,
-                    "source_info": {
-                        "sulfur": "生意社(100ppi.com) 实时爬取",
-                        "map": "生意社/磷化工频道",
-                        "dap": "生意社(100ppi.com)",
-                        "lfp": "百川盈孚/Mysteel",
-                        "yp": "生意社/CBC金属网",
-                        "inventory": "生意社港口库存统计(估算)",
-                        "zlj": "中联金信息网(zljsteel.com)",
-                    },
-                    "scrape_status": last_scrape_status,
-                }
-
-                with cache_lock:
-                    with open(CACHE_FILE, "w", encoding="utf-8") as f:
-                        json.dump(data, f, ensure_ascii=False)
-
-            except Exception:
-                traceback.print_exc()
-
+        if now.weekday() in (1, 2, 3, 4):
             time.sleep(3600)  # 更新日: 每小时刷新一次
         else:
-            # 非更新日(周一/周末): 跳过爬取, 保留已有缓存(最近一次业务日的数据)
             time.sleep(7200)  # 每2小时检查是否进入更新日
 
 
@@ -569,10 +656,10 @@ def api_data():
 
 @app.route("/api/refresh")
 def api_refresh():
-    with cache_lock:
-        if os.path.exists(CACHE_FILE):
-            os.remove(CACHE_FILE)
-    data = get_cached_data()
+    # 强制重新爬取(忽略周二~周五限制)，失败则沿用上次真实价
+    data = refresh_and_cache(force=True)
+    if data is None:
+        data = get_cached_data() or {}
     return jsonify(data)
 
 
@@ -583,6 +670,7 @@ def api_scrape_status():
 
 # ── 云部署：模块加载时即启动爬虫线程（gunicorn 不会执行 __main__）──
 # 配合单 worker(-w 1) 部署，避免多进程重复爬取生意社
+ensure_initial_cache()
 _updater = threading.Thread(target=update_data_periodically, daemon=True)
 _updater.start()
 
