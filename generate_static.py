@@ -333,7 +333,7 @@ def main():
         return flat_reference_series(current_price, 30, today)[0]
 
     zj_pts = _series("sulfur", prices["sulfur_zhenjiang"])
-    solid_pts = [{"date": p["date"], "price": round(p["price"] - 300, 2), "flag": p["flag"]} for p in zj_pts]
+    solid_pts = [{"date": p["date"], "price": round((p["price"] - 300) / 50) * 50, "flag": p["flag"]} for p in zj_pts]
     inv = generate_inventory_history(30)
     for p in inv:
         p["flag"] = "估算"

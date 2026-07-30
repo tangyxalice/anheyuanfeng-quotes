@@ -455,7 +455,7 @@ def _build_all_histories(prices, real_histories, days=30):
         return flat_reference_series(current_price, days, today)[0]
 
     zj_pts = _series("sulfur", prices["sulfur_zhenjiang"])
-    solid_pts = [{"date": p["date"], "price": round(p["price"] - 300, 2), "flag": p["flag"]} for p in zj_pts]
+    solid_pts = [{"date": p["date"], "price": round((p["price"] - 300) / 50) * 50, "flag": p["flag"]} for p in zj_pts]
     inv = generate_inventory_history(days)
     for p in inv:
         p["flag"] = "估算"
@@ -602,7 +602,7 @@ def ensure_initial_cache():
                 k: flat_reference_series(last_good_prices.get(k, 0), 30, today)[0]
                 for k in ("sulfur_zhenjiang", "map_55", "map_73", "dap_64", "dap_98", "lfp", "lfp_power", "yp")
             }
-            solid = [{"date": p["date"], "price": round(p["price"] - 300, 2), "flag": p["flag"]} for p in history["sulfur_zhenjiang"]]
+            solid = [{"date": p["date"], "price": round((p["price"] - 300) / 50) * 50, "flag": p["flag"]} for p in history["sulfur_zhenjiang"]]
             history["sulfur_solid"] = solid
             inv = []
             for i in range(30):
@@ -610,9 +610,12 @@ def ensure_initial_cache():
                 ports = {p: round(v, 2) for p, v in PORT_INVENTORY_BASE.items()}
                 inv.append({"date": d.strftime("%Y-%m-%d"), "total": round(sum(PORT_INVENTORY_BASE.values()), 2), "ports": ports, "flag": "估算"})
             history["port_inventory"] = inv
+            initial_prices = dict(last_good_prices)
+            if "sulfur_zhenjiang" in initial_prices:
+                initial_prices["sulfur_solid"] = round((initial_prices["sulfur_zhenjiang"] - 300) / 50) * 50
             data = {
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "prices": dict(last_good_prices),
+                "prices": initial_prices,
                 "port_inventory": dict(PORT_INVENTORY_BASE),
                 "total_inventory": round(sum(PORT_INVENTORY_BASE.values()), 2),
                 "history": history,
